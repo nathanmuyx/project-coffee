@@ -23,7 +23,7 @@ export function CartPanel({
   const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 border-l border-gray-200">
+    <div className="fixed top-0 right-0 bottom-0 w-80 flex flex-col bg-gray-50 border-l border-gray-200 z-10">
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
         <h2 className="text-xl font-bold text-black">Your Order</h2>
         {items.length > 0 && (
@@ -42,39 +42,39 @@ export function CartPanel({
             <span className="text-lg">Tap items to add</span>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {items.map((item) => (
               <div
                 key={item.menuItem.id}
-                className="flex items-center justify-between gap-2"
+                className="bg-white rounded-xl p-3 border border-gray-200"
               >
-                <div className="flex-1 min-w-0">
-                  <div className="text-base font-bold text-black truncate">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="text-lg font-bold text-black leading-tight">
                     {item.menuItem.name}
                   </div>
-                  <div className="text-sm text-gray-500">
-                    {formatCurrency(item.menuItem.price)}
+                  <div className="text-lg font-bold text-black shrink-0 ml-2">
+                    {formatCurrency(item.menuItem.price * item.quantity)}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <button
                     onClick={() => onUpdateQuantity(item.menuItem.id, -1)}
-                    className="w-9 h-9 rounded-lg bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-xl font-bold text-black transition-colors"
+                    className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-black transition-colors"
                   >
                     -
                   </button>
-                  <span className="w-6 text-center font-bold text-lg text-black">
+                  <span className="w-8 text-center font-bold text-xl text-black">
                     {item.quantity}
                   </span>
                   <button
                     onClick={() => onUpdateQuantity(item.menuItem.id, 1)}
-                    className="w-9 h-9 rounded-lg bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-xl font-bold text-black transition-colors"
+                    className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-xl font-bold text-black transition-colors"
                   >
                     +
                   </button>
-                </div>
-                <div className="text-base font-bold w-16 text-right text-black">
-                  {formatCurrency(item.menuItem.price * item.quantity)}
+                  <span className="text-sm text-gray-500 ml-auto">
+                    {formatCurrency(item.menuItem.price)} each
+                  </span>
                 </div>
               </div>
             ))}

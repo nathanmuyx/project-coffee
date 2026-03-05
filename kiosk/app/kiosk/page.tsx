@@ -351,8 +351,8 @@ export default function KioskPage() {
 
   // Browsing (default)
   return (
-    <div className="flex h-screen bg-white">
-      <div className="flex-1 min-w-0 flex flex-col">
+    <div className="h-screen bg-white">
+      <div className="flex flex-col h-full pr-80">
         <div className="p-4 pb-0">
           <p className="text-gray-500 text-lg">Tap items to add to your order</p>
         </div>
@@ -361,14 +361,12 @@ export default function KioskPage() {
           onAddItem={addItem}
         />
       </div>
-      <div className="w-80 flex-shrink-0">
-        <CartPanel
-          items={cart}
-          onUpdateQuantity={updateQuantity}
-          onContinue={() => setFlowState("reviewing")}
-          onClear={clearCart}
-        />
-      </div>
+      <CartPanel
+        items={cart}
+        onUpdateQuantity={updateQuantity}
+        onContinue={() => setFlowState("reviewing")}
+        onClear={clearCart}
+      />
     </div>
   );
 }
