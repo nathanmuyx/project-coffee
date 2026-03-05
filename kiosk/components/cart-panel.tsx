@@ -94,7 +94,7 @@ export function CartPanel({
           disabled={items.length === 0}
           className="w-full py-4 rounded-xl bg-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-xl transition-colors active:scale-[0.98]"
         >
-          Continue
+          Checkout
         </button>
       </div>
     </div>

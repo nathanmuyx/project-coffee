@@ -342,7 +342,7 @@ export default function KioskPage() {
             disabled={cart.length === 0}
             className="w-full py-4 rounded-xl bg-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-xl transition-colors"
           >
-            Continue
+            Checkout
           </button>
         </div>
       </div>
