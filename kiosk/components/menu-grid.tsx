@@ -37,7 +37,7 @@ export function MenuGrid({ drinks, onAddItem }: MenuGridProps) {
               onClick={() => openModal(drink)}
               className="flex flex-col rounded-2xl bg-white border border-gray-200 overflow-hidden transition-all active:scale-95 text-left shadow-sm"
             >
-              <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center relative">
+              <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center relative overflow-hidden">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={drink.image}
