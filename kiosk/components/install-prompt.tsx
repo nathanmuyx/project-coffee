@@ -50,7 +50,7 @@ export function InstallPrompt() {
     <div className="fixed bottom-4 left-4 right-4 z-50 flex justify-center">
       <button
         onClick={handleInstall}
-        className="flex items-center gap-3 bg-indigo-500 hover:bg-indigo-400 text-white px-6 py-3 rounded-2xl shadow-lg shadow-indigo-500/30 transition-colors active:scale-95 font-semibold"
+        className="flex items-center gap-3 bg-black hover:bg-gray-800 text-white px-6 py-3 rounded-2xl shadow-lg transition-colors active:scale-95 font-bold text-lg"
       >
         <svg
           className="w-5 h-5"
