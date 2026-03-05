@@ -6,7 +6,6 @@ import { MenuItem, CartItem } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import { buildDisplayMenu } from "@/lib/menu-config";
 import { MenuGrid } from "@/components/menu-grid";
-import { CartPanel } from "@/components/cart-panel";
 import { ChipNumberInput } from "@/components/chip-number-input";
 
 type FlowState =
@@ -51,15 +50,15 @@ export default function KioskPage() {
     }
   }, [flowState]);
 
-  const addItem = useCallback((item: MenuItem) => {
+  const addItem = useCallback((item: MenuItem, qty: number = 1) => {
     setCart((prev) => {
       const existing = prev.find((c) => c.menuItem.id === item.id);
       if (existing) {
         return prev.map((c) =>
-          c.menuItem.id === item.id ? { ...c, quantity: c.quantity + 1 } : c
+          c.menuItem.id === item.id ? { ...c, quantity: c.quantity + qty } : c
         );
       }
-      return [...prev, { menuItem: item, quantity: 1 }];
+      return [...prev, { menuItem: item, quantity: qty }];
     });
   }, []);
 
@@ -351,22 +350,40 @@ export default function KioskPage() {
 
   // Browsing (default)
   return (
-    <div className="h-screen bg-white">
-      <div className="flex flex-col h-full pr-80">
-        <div className="p-4 pb-0">
-          <p className="text-gray-500 text-lg">Tap items to add to your order</p>
-        </div>
-        <MenuGrid
-          drinks={displayMenu}
-          onAddItem={addItem}
-        />
+    <div className="flex flex-col h-screen bg-white">
+      <div className="p-4 pb-0">
+        <p className="text-gray-500 text-lg">Tap items to add to your order</p>
       </div>
-      <CartPanel
-        items={cart}
-        onUpdateQuantity={updateQuantity}
-        onContinue={() => setFlowState("reviewing")}
-        onClear={clearCart}
+      <MenuGrid
+        drinks={displayMenu}
+        onAddItem={addItem}
       />
+      {cart.length > 0 && (
+        <div className="border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
+          <div>
+            <span className="text-lg text-gray-500">
+              {totalItems} item{totalItems !== 1 ? "s" : ""}
+            </span>
+            <span className="text-2xl font-extrabold text-black ml-3">
+              {formatCurrency(total)}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={clearCart}
+              className="px-4 py-3 rounded-xl text-gray-400 hover:text-red-500 font-bold text-lg transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => setFlowState("reviewing")}
+              className="px-8 py-3 rounded-xl bg-black hover:bg-gray-800 text-white font-bold text-xl transition-colors active:scale-[0.98]"
+            >
+              Checkout
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
