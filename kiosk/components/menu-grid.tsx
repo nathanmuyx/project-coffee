@@ -32,7 +32,7 @@ export function MenuGrid({ drinks, onAddItem }: MenuGridProps) {
               className="flex flex-col rounded-2xl bg-white border border-gray-200 overflow-hidden transition-all active:scale-95 text-left shadow-sm"
             >
               {/* Image */}
-              <div className="w-full aspect-square bg-gray-100 flex items-center justify-center relative">
+              <div className="w-full aspect-[4/3] bg-gray-100 flex items-center justify-center relative">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={drink.image}
@@ -69,17 +69,16 @@ export function MenuGrid({ drinks, onAddItem }: MenuGridProps) {
       {/* Hot/Iced picker overlay */}
       {selecting && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-end justify-center z-50"
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
           onClick={() => setSelecting(null)}
         >
           <div
-            className="bg-white w-full max-w-md rounded-t-3xl p-6 pb-8"
+            className="bg-white w-full max-w-sm rounded-3xl p-8"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-5" />
             <h3 className="text-2xl font-bold text-black text-center mb-1">{selecting.name}</h3>
             <p className="text-gray-500 text-center text-base mb-6">Choose your preference</p>
-            <div className="flex gap-3">
+            <div className="flex gap-3 justify-center">
               {selecting.variants.map((v) => (
                 <button
                   key={v.label}
@@ -87,7 +86,7 @@ export function MenuGrid({ drinks, onAddItem }: MenuGridProps) {
                     onAddItem(v.menuItem);
                     setSelecting(null);
                   }}
-                  className="flex-1 flex flex-col items-center gap-3 p-6 rounded-2xl border-2 border-gray-200 hover:border-black transition-colors active:scale-95"
+                  className="w-36 flex flex-col items-center gap-3 p-6 rounded-2xl border-2 border-gray-200 hover:border-black transition-colors active:scale-95"
                 >
                   <span className="text-2xl font-bold text-black">{v.label}</span>
                   <span className="text-lg text-gray-600 font-semibold">
