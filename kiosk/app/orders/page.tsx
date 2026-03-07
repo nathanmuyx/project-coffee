@@ -38,6 +38,7 @@ export default function OrdersPage() {
   const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
   const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
   const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
+  const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -357,7 +358,13 @@ export default function OrdersPage() {
                       key={order.id}
                       order={order}
                       position={i}
-                      onPaid={handleAcceptPayment}
+                      onPaid={(id) => {
+                        if (order.payment_method === "cash") {
+                          setCashModalOrder(order);
+                        } else {
+                          handleAcceptPayment(id);
+                        }
+                      }}
                       onCancel={handleCancel}
                     />
                   ))}
@@ -689,6 +696,141 @@ export default function OrdersPage() {
           <span className="text-xs font-bold">Sales</span>
         </button>
       </div>
+
+      {/* Cash payment modal */}
+      {cashModalOrder && (
+        <CashPaymentModal
+          order={cashModalOrder}
+          onConfirm={() => {
+            handleAcceptPayment(cashModalOrder.id);
+            setCashModalOrder(null);
+          }}
+          onClose={() => setCashModalOrder(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfirm: () => void; onClose: () => void }) {
+  const [cashGiven, setCashGiven] = useState(0);
+  const change = cashGiven - order.total;
+  const isExact = cashGiven === order.total;
+  const hasEnough = cashGiven >= order.total;
+
+  const presets = [200, 300, 500, 1000];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5 mx-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+        {/* Block number */}
+        <div className="flex items-center justify-center mb-4">
+          <div className="w-16 h-16 rounded-xl bg-white flex items-center justify-center">
+            <span className="text-3xl font-extrabold text-black">{order.chip_number ?? "?"}</span>
+          </div>
+        </div>
+
+        {/* Total */}
+        <div className="text-center mb-4">
+          <span className="text-sm text-slate-400">Total</span>
+          <div className="text-3xl font-extrabold text-white">{formatCurrency(order.total)}</div>
+        </div>
+
+        {/* Exact amount button */}
+        <button
+          onClick={() => setCashGiven(order.total)}
+          className={`w-full py-3 rounded-xl text-sm font-bold mb-3 transition-colors ${
+            isExact
+              ? "bg-emerald-500 text-white"
+              : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+          }`}
+        >
+          Exact {formatCurrency(order.total)}
+        </button>
+
+        {/* Preset amounts */}
+        <div className="grid grid-cols-4 gap-2 mb-3">
+          {presets.map((amt) => (
+            <button
+              key={amt}
+              onClick={() => setCashGiven(amt)}
+              className={`py-2.5 rounded-xl text-sm font-bold transition-colors ${
+                cashGiven === amt
+                  ? "bg-blue-500 text-white"
+                  : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+              }`}
+            >
+              {formatCurrency(amt)}
+            </button>
+          ))}
+        </div>
+
+        {/* Increment buttons */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setCashGiven((v) => v + 100)}
+            className="flex-1 py-2.5 rounded-xl bg-slate-700 text-slate-300 hover:bg-slate-600 text-sm font-bold transition-colors"
+          >
+            +{formatCurrency(100)}
+          </button>
+          <button
+            onClick={() => setCashGiven((v) => v + 500)}
+            className="flex-1 py-2.5 rounded-xl bg-slate-700 text-slate-300 hover:bg-slate-600 text-sm font-bold transition-colors"
+          >
+            +{formatCurrency(500)}
+          </button>
+          <div className="flex-1 relative">
+            <input
+              type="number"
+              placeholder="Custom"
+              className="w-full py-2.5 rounded-xl bg-slate-700 text-white text-sm font-bold text-center placeholder-slate-500 outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const val = parseInt((e.target as HTMLInputElement).value, 10);
+                  if (val > 0) setCashGiven(val);
+                }
+              }}
+              onBlur={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (val > 0) setCashGiven(val);
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Cash given & change */}
+        {cashGiven > 0 && (
+          <div className="bg-slate-900 rounded-xl p-3 mb-4">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-slate-400">Cash</span>
+              <span className="text-white font-bold">{formatCurrency(cashGiven)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Change</span>
+              <span className={`font-bold ${hasEnough ? "text-emerald-400" : "text-red-400"}`}>
+                {hasEnough ? formatCurrency(change) : `Short ${formatCurrency(Math.abs(change))}`}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!hasEnough || cashGiven === 0}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500 transition-colors"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -738,13 +880,26 @@ function QueueCard({
           {position === 0 ? "Now" : "Next"}
         </div>
       )}
-      <div className="flex items-center gap-2">
-        <span className={`font-extrabold shrink-0 ${
-          position === 0 ? "text-2xl text-indigo-300" : "text-xl text-indigo-400"
-        }`}>
-          {order.chip_number ?? "?"}
-        </span>
+      <div className="flex items-center gap-3">
+        {isPending ? (
+          <div className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 ${
+            position === 0 ? "bg-white" : "bg-slate-600"
+          }`}>
+            <span className={`text-2xl font-extrabold ${position === 0 ? "text-black" : "text-white"}`}>
+              {order.chip_number ?? "?"}
+            </span>
+          </div>
+        ) : (
+          <span className={`font-extrabold shrink-0 ${
+            position === 0 ? "text-2xl text-indigo-300" : "text-xl text-indigo-400"
+          }`}>
+            {order.chip_number ?? "?"}
+          </span>
+        )}
         <div className="flex-1 min-w-0">
+          {isPending && (
+            <span className="text-xs text-slate-400 block mb-0.5">Give block</span>
+          )}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`text-xs font-semibold ${
               order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-500"
