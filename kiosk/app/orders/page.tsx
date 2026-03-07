@@ -39,6 +39,8 @@ export default function OrdersPage() {
   const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
   const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
   const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
+  const [salesDates, setSalesDates] = useState<string[]>([]);
+  const [selectedSalesDate, setSelectedSalesDate] = useState<string>("");
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -85,17 +87,42 @@ export default function OrdersPage() {
       .then(({ data }) => { if (data) setMenuItems(data); });
   }, []);
 
+  // Fetch available sales dates
+  const fetchSalesDates = useCallback(async () => {
+    const { data } = await supabase
+      .from("orders")
+      .select("created_at")
+      .in("status", ["completed", "cancelled"])
+      .order("created_at", { ascending: false });
+    if (data) {
+      const unique = [...new Set(data.map((o) =>
+        new Date(o.created_at).toLocaleDateString("en-CA")
+      ))];
+      setSalesDates(unique);
+      if (!selectedSalesDate) {
+        setSelectedSalesDate(new Date().toLocaleDateString("en-CA"));
+      }
+    }
+  }, [selectedSalesDate]);
+
+  useEffect(() => {
+    fetchSalesDates();
+  }, [fetchSalesDates]);
+
   const fetchCompletedOrders = useCallback(async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const date = selectedSalesDate ? new Date(selectedSalesDate) : new Date();
+    date.setHours(0, 0, 0, 0);
+    const nextDay = new Date(date);
+    nextDay.setDate(nextDay.getDate() + 1);
     const { data } = await supabase
       .from("orders")
       .select("*, order_items(*)")
       .in("status", ["completed", "cancelled"])
-      .gte("created_at", today.toISOString())
+      .gte("created_at", date.toISOString())
+      .lt("created_at", nextDay.toISOString())
       .order("created_at", { ascending: false });
     if (data) setCompletedOrders(data);
-  }, []);
+  }, [selectedSalesDate]);
 
   useEffect(() => {
     fetchCompletedOrders();
@@ -509,10 +536,18 @@ export default function OrdersPage() {
           /* Sales Tab */
           <div className="flex-1 overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
-              <h1 className="text-lg font-extrabold">Today&apos;s Sales</h1>
-              <span className="text-sm text-slate-500">
-                {new Date().toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
-              </span>
+              <h1 className="text-lg font-extrabold">Sales</h1>
+              <select
+                value={selectedSalesDate}
+                onChange={(e) => setSelectedSalesDate(e.target.value)}
+                className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 font-semibold"
+              >
+                {salesDates.map((d) => (
+                  <option key={d} value={d}>
+                    {new Date(d + "T00:00:00").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
