@@ -232,6 +232,13 @@ export default function OrdersPage() {
     fetchOrders();
   };
 
+  const handleMarkUtangPaid = async (orderId: string) => {
+    setCompletedOrders((prev) =>
+      prev.map((o) => o.id === orderId ? { ...o, payment_method: "cash" as const } : o)
+    );
+    await supabase.from("orders").update({ payment_method: "cash" }).eq("id", orderId);
+  };
+
   const handleDeleteOrder = async () => {
     if (!deleteOrderId) return;
     setCompletedOrders((prev) => prev.filter((o) => o.id !== deleteOrderId));
@@ -562,7 +569,12 @@ export default function OrdersPage() {
                   </div>
                   <div className="divide-y divide-slate-700/50">
                     {completedOrders.map((order) => (
-                      <SwipeDeleteRow key={order.id} onDelete={() => setDeleteOrderId(order.id)}>
+                      <SwipeDeleteRow
+                        key={order.id}
+                        onDelete={() => setDeleteOrderId(order.id)}
+                        isUtang={order.payment_method === "utang"}
+                        onMarkPaid={() => handleMarkUtangPaid(order.id)}
+                      >
                         <div className="px-3 py-2.5">
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">
@@ -792,12 +804,12 @@ function QueueCard({
   );
 }
 
-function SwipeDeleteRow({ onDelete, children }: { onDelete: () => void; children: React.ReactNode }) {
+function SwipeDeleteRow({ onDelete, isUtang, onMarkPaid, children }: { onDelete: () => void; isUtang?: boolean; onMarkPaid?: () => void; children: React.ReactNode }) {
   const rowRef = useRef<HTMLDivElement>(null);
   const startX = useRef(0);
   const currentX = useRef(0);
   const swiping = useRef(false);
-  const threshold = 80;
+  const threshold = isUtang ? 160 : 80;
 
   const handleTouchStart = (e: React.TouchEvent) => {
     startX.current = e.touches[0].clientX;
@@ -833,10 +845,18 @@ function SwipeDeleteRow({ onDelete, children }: { onDelete: () => void; children
 
   return (
     <div className="relative overflow-hidden">
-      <div className="absolute inset-y-0 right-0 w-20 bg-red-500 flex items-center justify-center">
+      <div className={`absolute inset-y-0 right-0 flex ${isUtang ? "w-40" : "w-20"}`}>
+        {isUtang && (
+          <button
+            onClick={() => { resetSwipe(); onMarkPaid?.(); }}
+            className="w-20 bg-emerald-500 text-white text-xs font-bold flex items-center justify-center"
+          >
+            Paid
+          </button>
+        )}
         <button
           onClick={() => { resetSwipe(); onDelete(); }}
-          className="text-white text-xs font-bold w-full h-full"
+          className="w-20 bg-red-500 text-white text-xs font-bold flex items-center justify-center"
         >
           Delete
         </button>
