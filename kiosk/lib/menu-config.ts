@@ -67,7 +67,7 @@ export function buildDisplayMenu(items: MenuItem[]): DisplayDrink[] {
         name: group.name,
         image: `/drinks/${group.image}.png`,
         color: getDrinkColor(variants[0].menuItem.name),
-        price: Math.min(...variants.map((v) => v.menuItem.price)),
+        price: Math.max(...variants.map((v) => v.menuItem.price)),
         variants,
       });
     }
