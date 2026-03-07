@@ -802,25 +802,22 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
           </div>
         )}
 
-        {/* Exact + Confirm */}
+        {/* Actions */}
         <div className="flex gap-3">
           <button
-            onClick={() => { setCashGiven(order.total); }}
-            className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-              isExact
-                ? "bg-emerald-500 text-white"
-                : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-            }`}
+            onClick={onConfirm}
+            className="flex-1 py-3 rounded-xl text-sm font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-colors"
           >
             Exact {formatCurrency(order.total)}
           </button>
-          <button
-            onClick={onConfirm}
-            disabled={!hasEnough || cashGiven === 0}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500 transition-colors"
-          >
-            Confirm
-          </button>
+          {cashGiven > 0 && hasEnough && (
+            <button
+              onClick={onConfirm}
+              className="flex-1 py-3 rounded-xl text-sm font-bold bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+            >
+              Confirm ({formatCurrency(change)} change)
+            </button>
+          )}
         </div>
       </div>
     </div>
