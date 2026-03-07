@@ -21,6 +21,7 @@ export interface Order {
   status: "pending" | "preparing" | "ready" | "completed" | "cancelled";
   chip_number: number | null;
   payment_method: "cash" | "gcash" | "utang";
+  receipt_url: string | null;
   notes: string | null;
   created_at: string;
   order_items?: OrderItem[];

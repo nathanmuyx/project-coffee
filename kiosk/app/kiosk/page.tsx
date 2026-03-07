@@ -14,6 +14,7 @@ type FlowState =
   | "payment"
   | "waiting_cash"
   | "gcash_qr"
+  | "gcash_capture"
   | "success";
 
 type PaymentMethod = "cash" | "gcash";
@@ -31,7 +32,15 @@ export default function KioskPage() {
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [gcashOverride, setGcashOverride] = useState(false);
   const [qrLoaded, setQrLoaded] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<Blob | null>(null);
+  const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     supabase
@@ -212,6 +221,144 @@ export default function KioskPage() {
     setFlowState("payment");
   };
 
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setCameraReady(false);
+    setCountdown(null);
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    setCameraError(false);
+    setCameraReady(false);
+    setCapturedImage(null);
+    setCapturedPreview(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play();
+          setCameraReady(true);
+        };
+      }
+    } catch {
+      setCameraError(true);
+    }
+  }, []);
+
+  // Start countdown when camera is ready and no image captured yet
+  useEffect(() => {
+    if (flowState === "gcash_capture" && cameraReady && !capturedImage) {
+      setCountdown(3);
+      countdownRef.current = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev === null || prev <= 1) {
+            if (countdownRef.current) clearInterval(countdownRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+      };
+    }
+  }, [flowState, cameraReady, capturedImage]);
+
+  // Auto-capture when countdown hits 0
+  useEffect(() => {
+    if (countdown === 0 && !capturedImage) {
+      capturePhoto();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown, capturedImage]);
+
+  const capturePhoto = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          setCapturedImage(blob);
+          setCapturedPreview(URL.createObjectURL(blob));
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          setCountdown(null);
+        }
+      },
+      "image/jpeg",
+      0.8
+    );
+  }, []);
+
+  const handleRetake = useCallback(() => {
+    if (capturedPreview) URL.revokeObjectURL(capturedPreview);
+    setCapturedImage(null);
+    setCapturedPreview(null);
+  }, [capturedPreview]);
+
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCapturedImage(file);
+    setCapturedPreview(URL.createObjectURL(file));
+  }, []);
+
+  const handleConfirmReceipt = async () => {
+    if (!capturedImage) return;
+    setSubmitting(true);
+    try {
+      const orderId = await submitOrder("gcash");
+      if (!orderId) return;
+
+      const filename = `${orderId}.jpg`;
+      await supabase.storage.from("receipts").upload(filename, capturedImage, {
+        contentType: "image/jpeg",
+      });
+      const { data: { publicUrl } } = supabase.storage
+        .from("receipts")
+        .getPublicUrl(filename);
+      await supabase
+        .from("orders")
+        .update({ receipt_url: publicUrl })
+        .eq("id", orderId);
+
+      stopCamera();
+      if (capturedPreview) URL.revokeObjectURL(capturedPreview);
+      setCapturedImage(null);
+      setCapturedPreview(null);
+      setPendingOrderId(orderId);
+      setFlowState("success");
+    } catch (err) {
+      console.error("Receipt upload failed:", err);
+      alert("Failed to upload receipt. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Clean up camera when leaving gcash_capture
+  useEffect(() => {
+    if (flowState !== "gcash_capture") {
+      stopCamera();
+    }
+  }, [flowState, stopCamera]);
+
   const goToPayment = async () => {
     await assignNextNumber();
     setFlowState("payment");
@@ -333,18 +480,122 @@ export default function KioskPage() {
         </div>
 
         <button
-          onClick={async () => {
-            const orderId = await submitOrder("gcash");
-            if (orderId) {
-              setPendingOrderId(orderId);
-              setFlowState("success");
-            }
+          onClick={() => {
+            setFlowState("gcash_capture");
+            startCamera();
           }}
-          disabled={submitting}
-          className="w-full max-w-sm py-4 rounded-xl bg-black hover:bg-gray-800 disabled:opacity-50 text-white font-bold text-xl transition-colors"
+          className="w-full max-w-sm py-4 rounded-xl bg-black hover:bg-gray-800 text-white font-bold text-xl transition-colors"
         >
-          {submitting ? "Submitting..." : "Done"}
+          I&apos;ve Paid
         </button>
+      </div>
+    );
+  }
+
+  // GCash receipt capture
+  if (flowState === "gcash_capture") {
+    return (
+      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
+        <button
+          onClick={() => {
+            stopCamera();
+            if (capturedPreview) URL.revokeObjectURL(capturedPreview);
+            setCapturedImage(null);
+            setCapturedPreview(null);
+            setFlowState("gcash_qr");
+          }}
+          className="self-start mb-4 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+
+        <h2 className="text-2xl font-bold text-black mb-2">
+          {capturedPreview ? "Confirm Receipt" : "Show Your Receipt"}
+        </h2>
+        {!capturedPreview && (
+          <p className="text-lg text-gray-500 mb-4">Hold your phone receipt in the frame</p>
+        )}
+
+        {capturedPreview ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={capturedPreview}
+              alt="Captured receipt"
+              className="flex-1 max-h-[60vh] object-contain rounded-2xl border-2 border-gray-200 mb-6"
+            />
+            <div className="flex gap-4 w-full max-w-sm">
+              <button
+                onClick={handleRetake}
+                className="flex-1 py-4 rounded-xl bg-gray-100 hover:bg-gray-200 text-black font-bold text-xl transition-colors"
+              >
+                Retake
+              </button>
+              <button
+                onClick={handleConfirmReceipt}
+                disabled={submitting}
+                className="flex-1 py-4 rounded-xl bg-black hover:bg-gray-800 disabled:opacity-50 text-white font-bold text-xl transition-colors"
+              >
+                {submitting ? "Submitting..." : "Confirm"}
+              </button>
+            </div>
+          </>
+        ) : cameraError ? (
+          <>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4">
+              <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
+                <svg className="w-10 h-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+                </svg>
+              </div>
+              <p className="text-gray-500 text-center">Camera not available.<br />Upload a screenshot instead.</p>
+              <label className="px-8 py-4 rounded-xl bg-black hover:bg-gray-800 text-white font-bold text-xl transition-colors cursor-pointer">
+                Choose Photo
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+              </label>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="relative flex-1 w-full max-h-[60vh] flex items-center justify-center mb-4">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="h-full w-full object-cover rounded-2xl border-2 border-gray-200"
+              />
+              {countdown !== null && countdown > 0 && cameraReady && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-9xl font-extrabold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.5)]">
+                    {countdown}
+                  </span>
+                </div>
+              )}
+              {!cameraReady && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-2xl">
+                  <div className="w-12 h-12 border-4 border-gray-200 border-t-black rounded-full animate-spin" />
+                </div>
+              )}
+            </div>
+            <button
+              onClick={capturePhoto}
+              disabled={!cameraReady}
+              className="w-full max-w-sm py-4 rounded-xl bg-black hover:bg-gray-800 disabled:opacity-50 text-white font-bold text-xl transition-colors"
+            >
+              Capture Now
+            </button>
+          </>
+        )}
       </div>
     );
   }
