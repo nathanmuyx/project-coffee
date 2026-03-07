@@ -30,6 +30,7 @@ export default function KioskPage() {
   const [submitting, setSubmitting] = useState(false);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [gcashOverride, setGcashOverride] = useState(false);
+  const [takenNumbers, setTakenNumbers] = useState<number[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -42,6 +43,29 @@ export default function KioskPage() {
         if (data) setMenuItems(data);
       });
   }, []);
+
+  const fetchTakenNumbers = useCallback(async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data } = await supabase
+      .from("orders")
+      .select("chip_number")
+      .in("status", ["pending", "preparing", "ready"])
+      .gte("created_at", today.toISOString())
+      .not("chip_number", "is", null);
+    if (data) {
+      setTakenNumbers(data.map((o) => o.chip_number as number));
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTakenNumbers();
+  }, [fetchTakenNumbers]);
+
+  // Refresh taken numbers when entering block selection
+  useEffect(() => {
+    if (flowState === "entering_chip") fetchTakenNumbers();
+  }, [flowState, fetchTakenNumbers]);
 
   // Listen for GCash display override from /orders
   useEffect(() => {
@@ -368,6 +392,7 @@ export default function KioskPage() {
             setFlowState("payment");
           }}
           onBack={() => setFlowState("reviewing")}
+          takenNumbers={takenNumbers}
         />
       </div>
     );
