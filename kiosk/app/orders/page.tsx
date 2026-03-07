@@ -797,15 +797,15 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
 
         {/* Cash given & change */}
         {cashGiven > 0 && (
-          <div className="bg-slate-900 rounded-xl p-3 mb-4">
-            <div className="flex justify-between text-sm mb-1">
-              <span className="text-slate-400">Cash</span>
-              <span className="text-white font-bold">{formatCurrency(cashGiven)}</span>
+          <div className="bg-slate-900 rounded-xl p-4 mb-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm text-slate-400">Cash</span>
+              <span className="text-lg text-white font-bold">{formatCurrency(cashGiven)}</span>
             </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Change</span>
-              <span className={`font-bold ${hasEnough ? "text-emerald-400" : "text-red-400"}`}>
-                {hasEnough ? formatCurrency(change) : `Short ${formatCurrency(Math.abs(change))}`}
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-slate-400">Change</span>
+              <span className={`text-3xl font-extrabold ${hasEnough ? "text-emerald-400" : "text-red-400"}`}>
+                {hasEnough ? formatCurrency(change) : `-${formatCurrency(Math.abs(change))}`}
               </span>
             </div>
           </div>
