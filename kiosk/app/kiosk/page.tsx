@@ -435,20 +435,20 @@ export default function KioskPage() {
           onAddItem={addItem}
         />
       </div>
-      <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
+      <div className="shrink-0 border-t border-gray-200 bg-white px-6 py-5 flex items-center justify-between">
         <div>
-          <span className="text-lg text-gray-500">
+          <span className="text-2xl text-gray-500">
             {totalItems > 0 ? `${totalItems} item${totalItems !== 1 ? "s" : ""}` : "No items"}
           </span>
-          <span className="text-2xl font-extrabold text-black ml-3">
+          <span className="text-4xl font-extrabold text-black ml-4">
             {formatCurrency(total)}
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           {cart.length > 0 && (
             <button
               onClick={clearCart}
-              className="px-4 py-3 rounded-xl text-gray-400 hover:text-red-500 font-bold text-lg transition-colors"
+              className="px-6 py-5 rounded-2xl text-gray-400 hover:text-red-500 font-bold text-2xl transition-colors"
             >
               Clear
             </button>
@@ -456,7 +456,7 @@ export default function KioskPage() {
           <button
             onClick={() => setFlowState("reviewing")}
             disabled={cart.length === 0}
-            className="px-8 py-3 rounded-xl bg-black hover:bg-gray-800 disabled:bg-gray-300 disabled:text-gray-500 text-white font-bold text-xl transition-colors active:scale-[0.98]"
+            className="px-12 py-5 rounded-2xl bg-black hover:bg-gray-800 disabled:bg-gray-300 disabled:text-gray-500 text-white font-bold text-3xl transition-colors active:scale-[0.98]"
           >
             Checkout
           </button>
