@@ -355,13 +355,16 @@ export default function KioskPage() {
           Back
         </button>
 
-        <div className="w-28 h-28 rounded-3xl bg-black flex items-center justify-center mb-3">
-          <span className="text-6xl font-extrabold text-white">{chipNumber}</span>
-        </div>
-        <p className="text-lg text-gray-400 mb-6">Pick up block <span className="font-bold text-black">{chipNumber}</span></p>
+        <div className="text-6xl font-extrabold text-black mb-2">{formatCurrency(total)}</div>
 
-        <h2 className="text-3xl font-bold text-black mb-2">How would you like to pay?</h2>
-        <p className="text-2xl text-gray-500 mb-8">{formatCurrency(total)}</p>
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-black flex items-center justify-center">
+            <span className="text-2xl font-extrabold text-white">{chipNumber}</span>
+          </div>
+          <span className="text-lg text-gray-400">Block <span className="font-bold text-black">{chipNumber}</span></span>
+        </div>
+
+        <h2 className="text-2xl font-bold text-gray-500 mb-6">How would you like to pay?</h2>
 
         <div className="flex gap-4 w-full max-w-md">
           <button
