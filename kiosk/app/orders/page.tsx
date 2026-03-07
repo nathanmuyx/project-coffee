@@ -736,18 +736,6 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
           <div className="text-3xl font-extrabold text-white">{formatCurrency(order.total)}</div>
         </div>
 
-        {/* Exact amount button */}
-        <button
-          onClick={() => setCashGiven(order.total)}
-          className={`w-full py-3 rounded-xl text-sm font-bold mb-3 transition-colors ${
-            isExact
-              ? "bg-emerald-500 text-white"
-              : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-          }`}
-        >
-          Exact {formatCurrency(order.total)}
-        </button>
-
         {/* Preset amounts */}
         <div className="grid grid-cols-4 gap-2 mb-3">
           {presets.map((amt) => (
@@ -814,13 +802,17 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
           </div>
         )}
 
-        {/* Actions */}
+        {/* Exact + Confirm */}
         <div className="flex gap-3">
           <button
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors"
+            onClick={() => { setCashGiven(order.total); }}
+            className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${
+              isExact
+                ? "bg-emerald-500 text-white"
+                : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+            }`}
           >
-            Cancel
+            Exact {formatCurrency(order.total)}
           </button>
           <button
             onClick={onConfirm}
