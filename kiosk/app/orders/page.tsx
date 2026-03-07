@@ -37,6 +37,7 @@ export default function OrdersPage() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
   const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
+  const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -227,6 +228,14 @@ export default function OrdersPage() {
     await supabase.from("order_items").insert(items);
     setPosCart(new Map());
     fetchOrders();
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!deleteOrderId) return;
+    setCompletedOrders((prev) => prev.filter((o) => o.id !== deleteOrderId));
+    await supabase.from("order_items").delete().eq("order_id", deleteOrderId);
+    await supabase.from("orders").delete().eq("id", deleteOrderId);
+    setDeleteOrderId(null);
   };
 
   const confirmOrders = orders.filter((o) => o.status === "pending");
@@ -539,39 +548,41 @@ export default function OrdersPage() {
                   </div>
                   <div className="divide-y divide-slate-700/50">
                     {completedOrders.map((order) => (
-                      <div key={order.id} className="px-3 py-2.5">
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            {order.chip_number && (
-                              <span className="text-sm font-extrabold text-slate-200">#{order.chip_number}</span>
-                            )}
-                            <span className={`text-xs font-semibold ${
-                              order.payment_method === "gcash" ? "text-blue-400" : "text-emerald-400"
-                            }`}>
-                              {order.payment_method === "gcash" ? "GCash" : "Cash"}
-                            </span>
-                            {order.status === "cancelled" && (
-                              <span className="text-xs font-semibold text-red-400">Cancelled</span>
-                            )}
+                      <SwipeDeleteRow key={order.id} onDelete={() => setDeleteOrderId(order.id)}>
+                        <div className="px-3 py-2.5">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              {order.chip_number && (
+                                <span className="text-sm font-extrabold text-slate-200">#{order.chip_number}</span>
+                              )}
+                              <span className={`text-xs font-semibold ${
+                                order.payment_method === "gcash" ? "text-blue-400" : "text-emerald-400"
+                              }`}>
+                                {order.payment_method === "gcash" ? "GCash" : "Cash"}
+                              </span>
+                              {order.status === "cancelled" && (
+                                <span className="text-xs font-semibold text-red-400">Cancelled</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-bold ${order.status === "cancelled" ? "text-red-400 line-through" : "text-slate-200"}`}>
+                                {formatCurrency(order.total)}
+                              </span>
+                              <span className="text-xs text-slate-600">
+                                {new Date(order.created_at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm font-bold ${order.status === "cancelled" ? "text-red-400 line-through" : "text-slate-200"}`}>
-                              {formatCurrency(order.total)}
-                            </span>
-                            <span className="text-xs text-slate-600">
-                              {new Date(order.created_at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}
-                            </span>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                            {(order.order_items ?? []).map((oi) => (
+                              <span key={oi.id} className="text-xs text-slate-400">
+                                {oi.quantity > 1 && <span className="text-slate-500">{oi.quantity}x </span>}
+                                {oi.item_name}
+                              </span>
+                            ))}
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                          {(order.order_items ?? []).map((oi) => (
-                            <span key={oi.id} className="text-xs text-slate-400">
-                              {oi.quantity > 1 && <span className="text-slate-500">{oi.quantity}x </span>}
-                              {oi.item_name}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
+                      </SwipeDeleteRow>
                     ))}
                   </div>
                 </div>
@@ -583,6 +594,30 @@ export default function OrdersPage() {
                 </div>
               )}
             </div>
+
+            {/* Delete confirmation modal */}
+            {deleteOrderId && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setDeleteOrderId(null)}>
+                <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 mx-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+                  <h2 className="text-lg font-bold text-white mb-2">Delete Order?</h2>
+                  <p className="text-sm text-slate-400 mb-5">This will permanently remove this order from history.</p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setDeleteOrderId(null)}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-bold text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleDeleteOrder}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-600 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -739,6 +774,68 @@ function QueueCard({
           Done
         </button>
       )}
+    </div>
+  );
+}
+
+function SwipeDeleteRow({ onDelete, children }: { onDelete: () => void; children: React.ReactNode }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const startX = useRef(0);
+  const currentX = useRef(0);
+  const swiping = useRef(false);
+  const threshold = 80;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    startX.current = e.touches[0].clientX;
+    currentX.current = 0;
+    swiping.current = true;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!swiping.current || !rowRef.current) return;
+    const diff = e.touches[0].clientX - startX.current;
+    currentX.current = Math.min(0, diff);
+    rowRef.current.style.transform = `translateX(${currentX.current}px)`;
+    rowRef.current.style.transition = "none";
+  };
+
+  const handleTouchEnd = () => {
+    if (!swiping.current || !rowRef.current) return;
+    swiping.current = false;
+    rowRef.current.style.transition = "transform 0.2s ease-out";
+    if (currentX.current < -threshold) {
+      rowRef.current.style.transform = `translateX(-${threshold}px)`;
+    } else {
+      rowRef.current.style.transform = "translateX(0)";
+    }
+  };
+
+  const resetSwipe = () => {
+    if (rowRef.current) {
+      rowRef.current.style.transition = "transform 0.2s ease-out";
+      rowRef.current.style.transform = "translateX(0)";
+    }
+  };
+
+  return (
+    <div className="relative overflow-hidden">
+      <div className="absolute inset-y-0 right-0 w-20 bg-red-500 flex items-center justify-center">
+        <button
+          onClick={() => { resetSwipe(); onDelete(); }}
+          className="text-white text-xs font-bold w-full h-full"
+        >
+          Delete
+        </button>
+      </div>
+      <div
+        ref={rowRef}
+        className="relative bg-slate-800 z-10"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        {children}
+      </div>
     </div>
   );
 }
