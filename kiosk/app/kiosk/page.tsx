@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { MenuItem, CartItem } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
@@ -11,9 +11,10 @@ import { ChipNumberInput } from "@/components/chip-number-input";
 type FlowState =
   | "browsing"
   | "reviewing"
-  | "payment"
   | "entering_chip"
-  | "confirming"
+  | "payment"
+  | "waiting_cash"
+  | "gcash_qr"
   | "success";
 
 type PaymentMethod = "cash" | "gcash";
@@ -26,6 +27,8 @@ export default function KioskPage() {
   const [chipNumber, setChipNumber] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [submitting, setSubmitting] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     supabase
@@ -38,17 +41,38 @@ export default function KioskPage() {
       });
   }, []);
 
+  // Auto-reset from success after 3s
   useEffect(() => {
     if (flowState === "success") {
       const timer = setTimeout(() => {
         setCart([]);
         setChipNumber(0);
         setPaymentMethod("cash");
+        setPendingOrderId(null);
         setFlowState("browsing");
-      }, 5000);
+      }, 3000);
       return () => clearTimeout(timer);
     }
   }, [flowState]);
+
+  // Poll for cash order acceptance
+  useEffect(() => {
+    if (flowState === "waiting_cash" && pendingOrderId) {
+      pollRef.current = setInterval(async () => {
+        const { data } = await supabase
+          .from("orders")
+          .select("status")
+          .eq("id", pendingOrderId)
+          .single();
+        if (data && data.status !== "pending") {
+          setFlowState("success");
+        }
+      }, 2500);
+      return () => {
+        if (pollRef.current) clearInterval(pollRef.current);
+      };
+    }
+  }, [flowState, pendingOrderId]);
 
   const addItem = useCallback((item: MenuItem, qty: number = 1) => {
     setCart((prev) => {
@@ -79,7 +103,18 @@ export default function KioskPage() {
   const total = cart.reduce((s, i) => s + i.menuItem.price * i.quantity, 0);
   const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
 
-  const submitOrder = async () => {
+  const itemImageMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const drink of displayMenu) {
+      for (const v of drink.variants) {
+        map.set(v.menuItem.id, drink.image);
+      }
+    }
+    return map;
+  }, [displayMenu]);
+
+  const submitOrder = async (method?: PaymentMethod): Promise<string | null> => {
+    const pm = method ?? paymentMethod;
     setSubmitting(true);
     try {
       const { data: order, error: orderError } = await supabase
@@ -89,7 +124,7 @@ export default function KioskPage() {
           total_cost: 0,
           status: "pending",
           chip_number: chipNumber,
-          payment_method: paymentMethod,
+          payment_method: pm,
         })
         .select("id")
         .single();
@@ -111,13 +146,23 @@ export default function KioskPage() {
 
       if (itemsError) throw itemsError;
 
-      setFlowState("success");
+      return order.id;
     } catch (err) {
       console.error("Order submission failed:", err);
       alert("Failed to place order. Please try again.");
+      return null;
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const cancelPendingOrder = async () => {
+    if (pendingOrderId) {
+      await supabase.from("order_items").delete().eq("order_id", pendingOrderId);
+      await supabase.from("orders").delete().eq("id", pendingOrderId);
+      setPendingOrderId(null);
+    }
+    setFlowState("payment");
   };
 
   // Success screen
@@ -130,98 +175,95 @@ export default function KioskPage() {
           </svg>
         </div>
         <h1 className="text-5xl font-extrabold text-black mb-2">Order Placed!</h1>
-        <p className="text-2xl text-gray-500 mb-6">Your chip number is</p>
-        <span className="text-8xl font-extrabold text-black mb-6">
+        <p className="text-2xl text-gray-500 mb-2">Your waiting number</p>
+        <span className="text-8xl font-extrabold text-black mb-4">
           #{chipNumber}
         </span>
-        {paymentMethod === "cash" && (
-          <p className="text-xl text-gray-500">Please pay at the counter.</p>
-        )}
-        {paymentMethod === "gcash" && (
-          <p className="text-xl text-black font-semibold">GCash payment noted.</p>
-        )}
-        <p className="text-gray-400 mt-4">This screen will reset shortly.</p>
+        <div className="text-4xl font-extrabold text-black mb-4">{formatCurrency(total)}</div>
+        <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-base font-bold mb-6 ${
+          paymentMethod === "gcash" ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"
+        }`}>
+          {paymentMethod === "gcash" ? "GCash" : "Cash"}
+        </div>
+        <div className="w-full max-w-sm space-y-1">
+          {cart.map((c) => (
+            <div key={c.menuItem.id} className="flex justify-between text-lg text-gray-700">
+              <span>{c.quantity}x {c.menuItem.name}</span>
+              <span className="font-semibold">{formatCurrency(c.menuItem.price * c.quantity)}</span>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
-  // Confirming screen
-  if (flowState === "confirming") {
+  // Waiting for cash payment acceptance
+  if (flowState === "waiting_cash") {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
-        <h2 className="text-3xl font-bold text-black mb-8">Confirm Your Order</h2>
-        <div className="bg-gray-50 rounded-2xl p-8 border border-gray-200 w-full max-w-sm text-center">
-          <div className="text-6xl font-extrabold text-black mb-4">
-            #{chipNumber}
-          </div>
-          <div className="text-xl text-gray-500 mb-1">
-            {totalItems} item{totalItems !== 1 ? "s" : ""}
-          </div>
-          <div className="text-4xl font-extrabold text-black mb-2">{formatCurrency(total)}</div>
-          <div className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-base font-bold mb-4 ${
-            paymentMethod === "gcash"
-              ? "bg-gray-100 text-black"
-              : "bg-gray-100 text-black"
-          }`}>
-            {paymentMethod === "gcash" ? "GCash" : "Cash"}
-          </div>
-          {paymentMethod === "gcash" && (
-            <div className="mb-4">
-              <p className="text-base text-gray-500 mb-3">Scan to pay with GCash</p>
-              <div className="bg-white rounded-xl p-4 inline-block border border-gray-200">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/gcash-qr.png"
-                  alt="GCash QR Code"
-                  className="w-48 h-48 object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                    (e.target as HTMLImageElement).parentElement!.innerHTML =
-                      '<div class="w-48 h-48 flex items-center justify-center text-gray-400 text-sm">QR placeholder<br/>Add gcash-qr.png to /public</div>';
-                  }}
-                />
-              </div>
-            </div>
-          )}
-          <div className="space-y-2">
-            {cart.map((c) => (
-              <div key={c.menuItem.id} className="flex justify-between text-lg text-gray-700">
-                <span>{c.quantity}x {c.menuItem.name}</span>
-                <span className="font-semibold">{formatCurrency(c.menuItem.price * c.quantity)}</span>
-              </div>
-            ))}
-          </div>
+        <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mb-6 animate-pulse">
+          <svg className="w-10 h-10 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
         </div>
-        <div className="flex gap-3 mt-8 w-full max-w-sm">
-          <button
-            onClick={() => setFlowState("entering_chip")}
-            className="flex-1 py-4 rounded-xl bg-gray-100 hover:bg-gray-200 text-black font-bold text-lg transition-colors"
-          >
-            Back
-          </button>
-          <button
-            onClick={submitOrder}
-            disabled={submitting}
-            className="flex-1 py-4 rounded-xl bg-black hover:bg-gray-800 text-white disabled:opacity-50 font-bold text-lg transition-colors"
-          >
-            {submitting ? "Placing..." : "Place Order"}
-          </button>
-        </div>
+        <h2 className="text-3xl font-bold text-black mb-2">Waiting for payment confirmation...</h2>
+        <p className="text-xl text-gray-500 mb-8">Please pay at the counter</p>
+        <div className="text-6xl font-extrabold text-black mb-2">#{chipNumber}</div>
+        <div className="text-4xl font-extrabold text-black mb-8">{formatCurrency(total)}</div>
+        <button
+          onClick={cancelPendingOrder}
+          className="px-8 py-4 rounded-xl bg-gray-100 hover:bg-gray-200 text-black font-bold text-lg transition-colors"
+        >
+          Cancel
+        </button>
       </div>
     );
   }
 
-  // Chip number input
-  if (flowState === "entering_chip") {
+  // GCash QR screen
+  if (flowState === "gcash_qr") {
     return (
-      <div className="h-screen bg-white">
-        <ChipNumberInput
-          onSubmit={(num) => {
-            setChipNumber(num);
-            setFlowState("confirming");
+      <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
+        <button
+          onClick={() => setFlowState("payment")}
+          className="self-start mb-6 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+
+        <h2 className="text-3xl font-bold text-black mb-2">Scan to pay with GCash</h2>
+        <div className="text-4xl font-extrabold text-black mb-6">{formatCurrency(total)}</div>
+
+        <div className="mb-6 flex-1 max-h-[60vh]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/gcash-qr.png"
+            alt="GCash QR Code"
+            className="h-full object-contain rounded-2xl"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+              (e.target as HTMLImageElement).parentElement!.innerHTML =
+                '<div class="w-full h-full flex items-center justify-center text-gray-400 text-sm">QR placeholder<br/>Add gcash-qr.png to /public</div>';
+            }}
+          />
+        </div>
+
+        <button
+          onClick={async () => {
+            const orderId = await submitOrder("gcash");
+            if (orderId) {
+              setPendingOrderId(orderId);
+              setFlowState("success");
+            }
           }}
-          onBack={() => setFlowState("payment")}
-        />
+          disabled={submitting}
+          className="w-full max-w-sm py-4 rounded-xl bg-black hover:bg-gray-800 disabled:opacity-50 text-white font-bold text-xl transition-colors"
+        >
+          {submitting ? "Submitting..." : "Done"}
+        </button>
       </div>
     );
   }
@@ -231,7 +273,7 @@ export default function KioskPage() {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
         <button
-          onClick={() => setFlowState("reviewing")}
+          onClick={() => setFlowState("entering_chip")}
           className="self-start mb-6 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -245,11 +287,16 @@ export default function KioskPage() {
 
         <div className="flex gap-4 w-full max-w-md">
           <button
-            onClick={() => {
+            onClick={async () => {
               setPaymentMethod("cash");
-              setFlowState("entering_chip");
+              const orderId = await submitOrder("cash");
+              if (orderId) {
+                setPendingOrderId(orderId);
+                setFlowState("waiting_cash");
+              }
             }}
-            className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95"
+            disabled={submitting}
+            className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95 disabled:opacity-50"
           >
             <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
               <svg className="w-10 h-10 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -263,7 +310,7 @@ export default function KioskPage() {
           <button
             onClick={() => {
               setPaymentMethod("gcash");
-              setFlowState("entering_chip");
+              setFlowState("gcash_qr");
             }}
             className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95"
           >
@@ -276,6 +323,21 @@ export default function KioskPage() {
             <span className="text-base text-gray-500">Scan QR to pay</span>
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // Waiting number input
+  if (flowState === "entering_chip") {
+    return (
+      <div className="h-screen bg-white">
+        <ChipNumberInput
+          onSubmit={(num) => {
+            setChipNumber(num);
+            setFlowState("payment");
+          }}
+          onBack={() => setFlowState("reviewing")}
+        />
       </div>
     );
   }
@@ -294,50 +356,62 @@ export default function KioskPage() {
           Add More Items
         </button>
         <h2 className="text-3xl font-bold text-black mb-4">Review Your Order</h2>
-        <div className="flex-1 overflow-y-auto space-y-3">
+        <div className="flex-1 overflow-y-auto space-y-4">
           {cart.map((item) => (
             <div
               key={item.menuItem.id}
-              className="flex items-center justify-between bg-gray-50 rounded-xl p-4 border border-gray-200"
+              className="flex items-center gap-4 bg-gray-50 rounded-2xl p-4 border border-gray-200"
             >
-              <div>
-                <div className="font-bold text-lg text-black">{item.menuItem.name}</div>
-                <div className="text-base text-gray-500">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={itemImageMap.get(item.menuItem.id) ?? ""}
+                alt={item.menuItem.name}
+                className="w-24 h-24 rounded-xl object-cover shrink-0 bg-gray-200"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-xl text-black leading-tight">{item.menuItem.name}</div>
+                <div className="text-lg text-gray-500 mt-1">
                   {formatCurrency(item.menuItem.price)} each
                 </div>
+                <div className="text-2xl font-extrabold text-black mt-1">
+                  {formatCurrency(item.menuItem.price * item.quantity)}
+                </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <button
                   onClick={() => updateQuantity(item.menuItem.id, -1)}
-                  className="w-12 h-12 rounded-lg bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-2xl font-bold text-black"
+                  className="w-16 h-16 rounded-2xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-4xl font-bold text-black active:scale-95 transition-transform"
                 >
                   -
                 </button>
-                <span className="w-8 text-center text-xl font-bold text-black">
+                <span className="w-10 text-center text-3xl font-extrabold text-black">
                   {item.quantity}
                 </span>
                 <button
                   onClick={() => updateQuantity(item.menuItem.id, 1)}
-                  className="w-12 h-12 rounded-lg bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-2xl font-bold text-black"
+                  className="w-16 h-16 rounded-2xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-4xl font-bold text-black active:scale-95 transition-transform"
                 >
                   +
                 </button>
-                <span className="w-24 text-right font-bold text-xl text-black">
-                  {formatCurrency(item.menuItem.price * item.quantity)}
-                </span>
               </div>
             </div>
           ))}
         </div>
         <div className="border-t border-gray-200 pt-4 mt-4">
-          <div className="flex justify-between items-center mb-4">
-            <span className="text-lg text-gray-500">
-              {totalItems} item{totalItems !== 1 ? "s" : ""}
-            </span>
-            <span className="text-3xl font-extrabold text-black">{formatCurrency(total)}</span>
+          <div className="flex justify-between items-end mb-4">
+            <div>
+              <span className="text-sm text-gray-400 uppercase tracking-wide">Total</span>
+              <div className="text-lg text-gray-500">
+                {totalItems} item{totalItems !== 1 ? "s" : ""}
+              </div>
+            </div>
+            <span className="text-5xl font-extrabold text-black">{formatCurrency(total)}</span>
           </div>
           <button
-            onClick={() => setFlowState("payment")}
+            onClick={() => setFlowState("entering_chip")}
             disabled={cart.length === 0}
             className="w-full py-4 rounded-xl bg-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-xl transition-colors"
           >
@@ -356,6 +430,7 @@ export default function KioskPage() {
       </div>
       <MenuGrid
         drinks={displayMenu}
+        cart={cart}
         onAddItem={addItem}
       />
       {cart.length > 0 && (

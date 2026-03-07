@@ -47,7 +47,7 @@ export function InstallPrompt() {
   if (isInstalled || !deferredPrompt) return null;
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 z-50 flex justify-center">
+    <div className="fixed top-4 left-4 right-4 z-50 flex justify-center">
       <button
         onClick={handleInstall}
         className="flex items-center gap-3 bg-black hover:bg-gray-800 text-white px-6 py-3 rounded-2xl shadow-lg transition-colors active:scale-95 font-bold text-lg"
