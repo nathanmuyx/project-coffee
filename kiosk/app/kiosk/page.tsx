@@ -104,7 +104,15 @@ export default function KioskPage() {
           .eq("id", pendingOrderId)
           .single();
         if (data && data.status !== "pending") {
-          setFlowState("success");
+          if (data.status === "cancelled") {
+            setCart([]);
+            setChipNumber(0);
+            setPaymentMethod("cash");
+            setPendingOrderId(null);
+            setFlowState("browsing");
+          } else {
+            setFlowState("success");
+          }
         }
       }, 2500);
       return () => {
@@ -355,16 +363,9 @@ export default function KioskPage() {
           Back
         </button>
 
-        <div className="text-6xl font-extrabold text-black mb-2">{formatCurrency(total)}</div>
+        <div className="text-6xl font-extrabold text-black mb-4">{formatCurrency(total)}</div>
 
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-black flex items-center justify-center">
-            <span className="text-2xl font-extrabold text-white">{chipNumber}</span>
-          </div>
-          <span className="text-lg text-gray-400">Block <span className="font-bold text-black">{chipNumber}</span></span>
-        </div>
-
-        <h2 className="text-2xl font-bold text-gray-500 mb-6">How would you like to pay?</h2>
+        <h2 className="text-2xl font-bold text-gray-500 mb-8">How would you like to pay?</h2>
 
         <div className="flex gap-4 w-full max-w-md">
           <button
