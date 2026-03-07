@@ -7,6 +7,7 @@ import { formatCurrency } from "@/lib/utils";
 import { buildDisplayMenu } from "@/lib/menu-config";
 import { MenuGrid } from "@/components/menu-grid";
 import { ChipNumberInput } from "@/components/chip-number-input";
+import { getKioskChannel } from "@/lib/kiosk-channel";
 
 type FlowState =
   | "browsing"
@@ -28,6 +29,7 @@ export default function KioskPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [submitting, setSubmitting] = useState(false);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [gcashOverride, setGcashOverride] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -39,6 +41,18 @@ export default function KioskPage() {
       .then(({ data }) => {
         if (data) setMenuItems(data);
       });
+  }, []);
+
+  // Listen for GCash display override from /orders
+  useEffect(() => {
+    const channel = getKioskChannel();
+    channel
+      .on("broadcast", { event: "display" }, ({ payload }) => {
+        if (payload.mode === "gcash_qr") setGcashOverride(true);
+        if (payload.mode === "normal") setGcashOverride(false);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   // Auto-reset from success after 3s
@@ -164,6 +178,23 @@ export default function KioskPage() {
     }
     setFlowState("payment");
   };
+
+  // GCash QR override from /orders
+  if (gcashOverride) {
+    return (
+      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
+        <h2 className="text-3xl font-bold text-black mb-2">Scan to pay with GCash</h2>
+        <div className="mb-6 flex-1 max-h-[70vh]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/gcash-qr.png"
+            alt="GCash QR Code"
+            className="h-full object-contain rounded-2xl"
+          />
+        </div>
+      </div>
+    );
+  }
 
   // Success screen
   if (flowState === "success") {

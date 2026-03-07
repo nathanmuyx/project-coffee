@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { Order } from "@/lib/types";
 import { formatCurrency, getShortName } from "@/lib/utils";
+import { MenuItem } from "@/lib/types";
+import { sendShowGcash, sendHideGcash } from "@/lib/kiosk-channel";
 
 const POLL_INTERVAL = 3000;
 
@@ -32,6 +34,9 @@ function classifyItem(name: string): { espresso: boolean; matcha: boolean } {
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const prevOrderIdsRef = useRef<Set<string>>(new Set());
+  const [gcashShowing, setGcashShowing] = useState(false);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -68,6 +73,15 @@ export default function OrdersPage() {
     const interval = setInterval(fetchOrders, POLL_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchOrders]);
+
+  useEffect(() => {
+    supabase
+      .from("menu_items")
+      .select("*")
+      .eq("is_available", true)
+      .order("sort_order")
+      .then(({ data }) => { if (data) setMenuItems(data); });
+  }, []);
 
   const { espressoCount, matchaCount } = useMemo(() => {
     let espresso = 0;
@@ -132,6 +146,58 @@ export default function OrdersPage() {
     if (error) fetchOrders();
   };
 
+  const toggleGcash = () => {
+    if (gcashShowing) {
+      sendHideGcash();
+      setGcashShowing(false);
+    } else {
+      sendShowGcash();
+      setGcashShowing(true);
+    }
+  };
+
+  const addToPosCart = (item: MenuItem) => {
+    setPosCart((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(item.id);
+      if (existing) {
+        next.set(item.id, { ...existing, qty: existing.qty + 1 });
+      } else {
+        next.set(item.id, { item, qty: 1 });
+      }
+      return next;
+    });
+  };
+
+  const posTotal = Array.from(posCart.values()).reduce((s, { item, qty }) => s + item.price * qty, 0);
+
+  const submitPosOrder = async (method: "cash" | "gcash") => {
+    if (posCart.size === 0) return;
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .insert({
+        total: posTotal,
+        total_cost: 0,
+        status: "preparing",
+        chip_number: null,
+        payment_method: method,
+      })
+      .select("id")
+      .single();
+    if (orderError || !order) return;
+    const items = Array.from(posCart.values()).map(({ item, qty }) => ({
+      order_id: order.id,
+      menu_item_id: item.id,
+      item_name: item.name,
+      item_price: item.price,
+      item_cost: 0,
+      quantity: qty,
+    }));
+    await supabase.from("order_items").insert(items);
+    setPosCart(new Map());
+    fetchOrders();
+  };
+
   const confirmOrders = orders.filter((o) => o.status === "pending");
   const makeOrders = orders.filter((o) => o.status !== "pending");
 
@@ -172,6 +238,16 @@ export default function OrdersPage() {
           <span className="text-sm text-slate-500">
             {orders.length} order{orders.length !== 1 ? "s" : ""}
           </span>
+          <button
+            onClick={toggleGcash}
+            className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
+              gcashShowing
+                ? "bg-blue-500 text-white"
+                : "bg-blue-500/15 text-blue-400"
+            }`}
+          >
+            {gcashShowing ? "Hide QR" : "Show QR"}
+          </button>
         </div>
       </div>
 
@@ -211,7 +287,7 @@ export default function OrdersPage() {
                 {makeItemSummary.map(({ name, qty }) => (
                   <span key={name} className="text-xs text-slate-300">
                     {qty > 1 && <span className="font-bold text-slate-100">{qty}x </span>}
-                    {getShortName(name)}
+                    {name}
                   </span>
                 ))}
               </div>
@@ -234,6 +310,52 @@ export default function OrdersPage() {
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Internal POS */}
+      <div className="shrink-0 border-t border-slate-700 bg-slate-800/80 px-3 py-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          {menuItems.map((item) => {
+            const inCart = posCart.get(item.id);
+            return (
+              <button
+                key={item.id}
+                onClick={() => addToPosCart(item)}
+                className="relative shrink-0 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-200 transition-colors"
+              >
+                {getShortName(item.name)}
+                {inCart && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 flex items-center justify-center rounded-full bg-blue-500 text-white text-[10px] font-bold px-1">
+                    {inCart.qty}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {posCart.size > 0 && (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-sm font-bold text-slate-200 mr-auto">{formatCurrency(posTotal)}</span>
+            <button
+              onClick={() => setPosCart(new Map())}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-red-400 transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => submitPosOrder("cash")}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold hover:bg-emerald-500/30 transition-colors"
+            >
+              Cash
+            </button>
+            <button
+              onClick={() => submitPosOrder("gcash")}
+              className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 text-xs font-bold hover:bg-blue-500/30 transition-colors"
+            >
+              GCash
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -314,14 +436,24 @@ function QueueCard({
       {/* Items breakdown */}
       <div className="mt-2 space-y-1">
         {(order.order_items ?? []).map((oi) => (
-          <div key={oi.id} className="flex items-start gap-1.5">
-            <span className="text-slate-600 text-lg leading-tight">•</span>
-            <span className={`text-base font-semibold leading-tight ${isPending ? "text-slate-100" : "text-slate-300"}`}>
-              {oi.quantity > 1 && <span className="text-slate-400 mr-1">{oi.quantity}x</span>}
-              {getShortName(oi.item_name)}
+          <div key={oi.id} className="flex items-start justify-between gap-1.5">
+            <div className="flex items-start gap-1.5">
+              <span className="text-slate-600 text-lg leading-tight">•</span>
+              <span className={`text-base font-semibold leading-tight ${isPending ? "text-slate-100" : "text-slate-300"}`}>
+                {oi.quantity > 1 && <span className="text-slate-400 mr-1">{oi.quantity}x</span>}
+                {oi.item_name}
+              </span>
+            </div>
+            <span className="text-xs text-slate-500 shrink-0 mt-0.5">
+              {formatCurrency(oi.item_price * oi.quantity)}
             </span>
           </div>
         ))}
+      </div>
+      {/* Order total */}
+      <div className="mt-1.5 pt-1.5 border-t border-slate-700/50 flex justify-between">
+        <span className="text-xs font-bold text-slate-400">Total</span>
+        <span className="text-sm font-bold text-slate-200">{formatCurrency(order.total)}</span>
       </div>
 
       {/* Action button */}
