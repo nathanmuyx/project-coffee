@@ -428,37 +428,40 @@ export default function KioskPage() {
       <div className="p-4 pb-0">
         <p className="text-gray-500 text-lg">Tap items to add to your order</p>
       </div>
-      <MenuGrid
-        drinks={displayMenu}
-        cart={cart}
-        onAddItem={addItem}
-      />
-      {cart.length > 0 && (
-        <div className="border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
-          <div>
-            <span className="text-lg text-gray-500">
-              {totalItems} item{totalItems !== 1 ? "s" : ""}
-            </span>
-            <span className="text-2xl font-extrabold text-black ml-3">
-              {formatCurrency(total)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
+      <div className="flex-1 min-h-0">
+        <MenuGrid
+          drinks={displayMenu}
+          cart={cart}
+          onAddItem={addItem}
+        />
+      </div>
+      <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
+        <div>
+          <span className="text-lg text-gray-500">
+            {totalItems > 0 ? `${totalItems} item${totalItems !== 1 ? "s" : ""}` : "No items"}
+          </span>
+          <span className="text-2xl font-extrabold text-black ml-3">
+            {formatCurrency(total)}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {cart.length > 0 && (
             <button
               onClick={clearCart}
               className="px-4 py-3 rounded-xl text-gray-400 hover:text-red-500 font-bold text-lg transition-colors"
             >
               Clear
             </button>
-            <button
-              onClick={() => setFlowState("reviewing")}
-              className="px-8 py-3 rounded-xl bg-black hover:bg-gray-800 text-white font-bold text-xl transition-colors active:scale-[0.98]"
-            >
-              Checkout
-            </button>
-          </div>
+          )}
+          <button
+            onClick={() => setFlowState("reviewing")}
+            disabled={cart.length === 0}
+            className="px-8 py-3 rounded-xl bg-black hover:bg-gray-800 disabled:bg-gray-300 disabled:text-gray-500 text-white font-bold text-xl transition-colors active:scale-[0.98]"
+          >
+            Checkout
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }

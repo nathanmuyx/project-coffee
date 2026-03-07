@@ -39,7 +39,7 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="h-full overflow-y-auto p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {drinks.map((drink) => {
             const badgeQty = drink.variants.reduce(
