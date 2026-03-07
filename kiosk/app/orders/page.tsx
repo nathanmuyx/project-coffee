@@ -726,10 +726,11 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5 mx-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
         {/* Block number */}
-        <div className="flex items-center justify-center mb-4">
-          <div className="w-16 h-16 rounded-xl bg-white flex items-center justify-center">
+        <div className="flex flex-col items-center mb-4">
+          <div className="w-16 h-16 rounded-xl bg-white flex items-center justify-center mb-2">
             <span className="text-3xl font-extrabold text-black">{order.chip_number ?? "?"}</span>
           </div>
+          <span className="text-sm text-slate-300">Prepare block <span className="font-bold text-white">{order.chip_number}</span> for customer</span>
         </div>
 
         {/* Total */}
