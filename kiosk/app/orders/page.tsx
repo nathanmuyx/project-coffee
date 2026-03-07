@@ -2,9 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Order } from "@/lib/types";
+import { Order, MenuItem } from "@/lib/types";
 import { formatCurrency, getShortName } from "@/lib/utils";
-import { MenuItem } from "@/lib/types";
 import { sendShowGcash, sendHideGcash } from "@/lib/kiosk-channel";
 
 const POLL_INTERVAL = 3000;
@@ -20,7 +19,6 @@ function classifyItem(name: string): { espresso: boolean; matcha: boolean } {
   const isCoffee =
     isDirtyMatcha || COFFEE_KEYWORDS.some((k) => lower.includes(k));
 
-  // "Caramel None Coffee" or "Honey Citrus" without "coffee" keyword = no espresso
   if (lower.includes("none coffee")) {
     return { espresso: false, matcha: isMatcha };
   }
@@ -32,6 +30,7 @@ function classifyItem(name: string): { espresso: boolean; matcha: boolean } {
 }
 
 export default function OrdersPage() {
+  const [tab, setTab] = useState<"orders" | "pos">("orders");
   const [orders, setOrders] = useState<Order[]>([]);
   const prevOrderIdsRef = useRef<Set<string>>(new Set());
   const [gcashShowing, setGcashShowing] = useState(false);
@@ -96,7 +95,6 @@ export default function OrdersPage() {
     return { espressoCount: espresso, matchaCount: matcha };
   }, [orders]);
 
-
   const playChime = () => {
     try {
       const ctx = new AudioContext();
@@ -156,6 +154,7 @@ export default function OrdersPage() {
     }
   };
 
+  // POS cart functions
   const addToPosCart = (item: MenuItem) => {
     setPosCart((prev) => {
       const next = new Map(prev);
@@ -164,6 +163,19 @@ export default function OrdersPage() {
         next.set(item.id, { ...existing, qty: existing.qty + 1 });
       } else {
         next.set(item.id, { item, qty: 1 });
+      }
+      return next;
+    });
+  };
+
+  const removePosItem = (itemId: string) => {
+    setPosCart((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(itemId);
+      if (existing && existing.qty > 1) {
+        next.set(itemId, { ...existing, qty: existing.qty - 1 });
+      } else {
+        next.delete(itemId);
       }
       return next;
     });
@@ -211,151 +223,235 @@ export default function OrdersPage() {
     return Array.from(counts.entries()).map(([name, qty]) => ({ name, qty }));
   }, [makeOrders]);
 
+  const pendingCount = confirmOrders.length;
+
   return (
     <div className="h-dvh overflow-hidden bg-slate-900 flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-extrabold">Orders</h1>
-          <span className="flex items-center gap-1 text-xs text-emerald-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Live
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          {espressoCount > 0 && (
-            <div className="flex items-center gap-1.5 bg-amber-500/15 px-2.5 py-1 rounded-full">
-              <span className="text-base">☕</span>
-              <span className="text-sm font-bold text-amber-400">{espressoCount}</span>
-            </div>
-          )}
-          {matchaCount > 0 && (
-            <div className="flex items-center gap-1.5 bg-emerald-500/15 px-2.5 py-1 rounded-full">
-              <span className="text-base">🍵</span>
-              <span className="text-sm font-bold text-emerald-400">{matchaCount}</span>
-            </div>
-          )}
-          <span className="text-sm text-slate-500">
-            {orders.length} order{orders.length !== 1 ? "s" : ""}
-          </span>
-          <button
-            onClick={toggleGcash}
-            className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
-              gcashShowing
-                ? "bg-blue-500 text-white"
-                : "bg-blue-500/15 text-blue-400"
-            }`}
-          >
-            {gcashShowing ? "Hide QR" : "Show QR"}
-          </button>
-        </div>
-      </div>
-
-      {/* Two-panel layout: vertical on portrait, side-by-side on landscape */}
-      <div className="flex-1 overflow-hidden grid grid-rows-2 landscape:grid-rows-1 landscape:grid-cols-2 divide-y landscape:divide-y-0 landscape:divide-x divide-slate-700">
-        {/* Top / Left: Confirm (pending orders) */}
-        <div className="flex flex-col overflow-hidden">
-          <div className="px-3 py-2 border-b border-slate-700 bg-slate-800/50 shrink-0">
-            <span className="text-xs font-bold text-amber-400">Confirm ({confirmOrders.length})</span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {confirmOrders.length === 0 && (
-              <div className="flex items-center justify-center h-24 text-slate-600 text-xs">
-                No orders to confirm
+      {/* Content */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {tab === "orders" ? (
+          <>
+            {/* Orders Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+              <div className="flex items-center gap-3">
+                <h1 className="text-lg font-extrabold">Orders</h1>
+                <span className="flex items-center gap-1 text-xs text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live
+                </span>
               </div>
-            )}
-            {confirmOrders.map((order, i) => (
-              <QueueCard
-                key={order.id}
-                order={order}
-                position={i}
-                onPaid={handleAcceptPayment}
-                onCancel={handleCancel}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Bottom / Right: Make (preparing/ready orders) */}
-        <div className="flex flex-col overflow-hidden">
-          <div className="px-3 py-2 border-b border-slate-700 bg-slate-800/50 shrink-0">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-blue-400">Make ({makeOrders.length})</span>
-            </div>
-            {makeItemSummary.length > 0 && (
-              <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
-                {makeItemSummary.map(({ name, qty }) => (
-                  <span key={name} className="text-xs text-slate-300">
-                    {qty > 1 && <span className="font-bold text-slate-100">{qty}x </span>}
-                    {name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {makeOrders.length === 0 && (
-              <div className="flex items-center justify-center h-24 text-slate-600 text-xs">
-                No orders to make
-              </div>
-            )}
-            {makeOrders.map((order, i) => (
-              <QueueCard
-                key={order.id}
-                order={order}
-                position={i}
-                onDone={handleComplete}
-                onCancel={handleCancel}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Internal POS */}
-      <div className="shrink-0 border-t border-slate-700 bg-slate-800/80 px-3 py-2">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          {menuItems.map((item) => {
-            const inCart = posCart.get(item.id);
-            return (
-              <button
-                key={item.id}
-                onClick={() => addToPosCart(item)}
-                className="relative shrink-0 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-200 transition-colors"
-              >
-                {getShortName(item.name)}
-                {inCart && (
-                  <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 flex items-center justify-center rounded-full bg-blue-500 text-white text-[10px] font-bold px-1">
-                    {inCart.qty}
-                  </span>
+              <div className="flex items-center gap-4">
+                {espressoCount > 0 && (
+                  <div className="flex items-center gap-1.5 bg-amber-500/15 px-2.5 py-1 rounded-full">
+                    <span className="text-base">☕</span>
+                    <span className="text-sm font-bold text-amber-400">{espressoCount}</span>
+                  </div>
                 )}
+                {matchaCount > 0 && (
+                  <div className="flex items-center gap-1.5 bg-emerald-500/15 px-2.5 py-1 rounded-full">
+                    <span className="text-base">🍵</span>
+                    <span className="text-sm font-bold text-emerald-400">{matchaCount}</span>
+                  </div>
+                )}
+                <span className="text-sm text-slate-500">
+                  {orders.length} order{orders.length !== 1 ? "s" : ""}
+                </span>
+                <button
+                  onClick={toggleGcash}
+                  className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
+                    gcashShowing
+                      ? "bg-blue-500 text-white"
+                      : "bg-blue-500/15 text-blue-400"
+                  }`}
+                >
+                  {gcashShowing ? "Hide QR" : "Show QR"}
+                </button>
+              </div>
+            </div>
+
+            {/* Two-panel layout */}
+            <div className="flex-1 overflow-hidden grid grid-rows-2 landscape:grid-rows-1 landscape:grid-cols-2 divide-y landscape:divide-y-0 landscape:divide-x divide-slate-700">
+              {/* Confirm */}
+              <div className="flex flex-col overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-700 bg-slate-800/50 shrink-0">
+                  <span className="text-xs font-bold text-amber-400">Confirm ({confirmOrders.length})</span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  {confirmOrders.length === 0 && (
+                    <div className="flex items-center justify-center h-24 text-slate-600 text-xs">
+                      No orders to confirm
+                    </div>
+                  )}
+                  {confirmOrders.map((order, i) => (
+                    <QueueCard
+                      key={order.id}
+                      order={order}
+                      position={i}
+                      onPaid={handleAcceptPayment}
+                      onCancel={handleCancel}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Make */}
+              <div className="flex flex-col overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-700 bg-slate-800/50 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-400">Make ({makeOrders.length})</span>
+                  </div>
+                  {makeItemSummary.length > 0 && (
+                    <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
+                      {makeItemSummary.map(({ name, qty }) => (
+                        <span key={name} className="text-xs text-slate-300">
+                          {qty > 1 && <span className="font-bold text-slate-100">{qty}x </span>}
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  {makeOrders.length === 0 && (
+                    <div className="flex items-center justify-center h-24 text-slate-600 text-xs">
+                      No orders to make
+                    </div>
+                  )}
+                  {makeOrders.map((order, i) => (
+                    <QueueCard
+                      key={order.id}
+                      order={order}
+                      position={i}
+                      onDone={handleComplete}
+                      onCancel={handleCancel}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          /* POS Tab */
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {/* POS Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+              <h1 className="text-lg font-extrabold">POS</h1>
+              <button
+                onClick={toggleGcash}
+                className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
+                  gcashShowing
+                    ? "bg-blue-500 text-white"
+                    : "bg-blue-500/15 text-blue-400"
+                }`}
+              >
+                {gcashShowing ? "Hide QR" : "Show QR"}
               </button>
-            );
-          })}
-        </div>
-        {posCart.size > 0 && (
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-sm font-bold text-slate-200 mr-auto">{formatCurrency(posTotal)}</span>
-            <button
-              onClick={() => setPosCart(new Map())}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-red-400 transition-colors"
-            >
-              Clear
-            </button>
-            <button
-              onClick={() => submitPosOrder("cash")}
-              className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold hover:bg-emerald-500/30 transition-colors"
-            >
-              Cash
-            </button>
-            <button
-              onClick={() => submitPosOrder("gcash")}
-              className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 text-xs font-bold hover:bg-blue-500/30 transition-colors"
-            >
-              GCash
-            </button>
+            </div>
+
+            {/* Menu grid */}
+            <div className="flex-1 overflow-y-auto p-3">
+              <div className="grid grid-cols-3 gap-2">
+                {menuItems.map((item) => {
+                  const inCart = posCart.get(item.id);
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => addToPosCart(item)}
+                      className="relative flex flex-col items-center gap-1 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 transition-colors active:scale-95"
+                    >
+                      {inCart && (
+                        <span className="absolute top-1.5 right-1.5 min-w-6 h-6 flex items-center justify-center rounded-full bg-blue-500 text-white text-xs font-bold px-1">
+                          {inCart.qty}
+                        </span>
+                      )}
+                      <span className="text-sm font-semibold text-slate-200 text-center leading-tight">
+                        {item.name}
+                      </span>
+                      <span className="text-xs text-slate-400">{formatCurrency(item.price)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* POS Cart */}
+            {posCart.size > 0 && (
+              <div className="shrink-0 border-t border-slate-700 bg-slate-800 px-4 py-3">
+                <div className="space-y-1 mb-3 max-h-32 overflow-y-auto">
+                  {Array.from(posCart.values()).map(({ item, qty }) => (
+                    <div key={item.id} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => removePosItem(item.id)}
+                          className="w-6 h-6 rounded bg-slate-700 hover:bg-red-500/20 text-slate-400 hover:text-red-400 flex items-center justify-center text-xs font-bold transition-colors"
+                        >
+                          -
+                        </button>
+                        <span className="text-slate-300">
+                          <span className="text-slate-500 mr-1">{qty}x</span>
+                          {item.name}
+                        </span>
+                      </div>
+                      <span className="text-slate-400">{formatCurrency(item.price * qty)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-bold text-white mr-auto">{formatCurrency(posTotal)}</span>
+                  <button
+                    onClick={() => setPosCart(new Map())}
+                    className="px-4 py-2 rounded-lg text-sm font-bold text-red-400 border border-red-400/30 hover:bg-red-500/15 transition-colors"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => submitPosOrder("cash")}
+                    className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/30 transition-colors"
+                  >
+                    Cash
+                  </button>
+                  <button
+                    onClick={() => submitPosOrder("gcash")}
+                    className="px-4 py-2 rounded-lg bg-blue-500/20 text-blue-400 text-sm font-bold hover:bg-blue-500/30 transition-colors"
+                  >
+                    GCash
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
+      </div>
+
+      {/* Bottom Navigation */}
+      <div className="shrink-0 border-t border-slate-700 bg-slate-800 flex">
+        <button
+          onClick={() => setTab("orders")}
+          className={`flex-1 py-3 flex flex-col items-center gap-1 transition-colors ${
+            tab === "orders" ? "text-white" : "text-slate-500"
+          }`}
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+          <span className="text-xs font-bold">Orders</span>
+          {pendingCount > 0 && tab !== "orders" && (
+            <span className="absolute top-1 right-1/4 min-w-5 h-5 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1">
+              {pendingCount}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setTab("pos")}
+          className={`flex-1 py-3 flex flex-col items-center gap-1 transition-colors ${
+            tab === "pos" ? "text-white" : "text-slate-500"
+          }`}
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
+          </svg>
+          <span className="text-xs font-bold">POS</span>
+        </button>
       </div>
     </div>
   );
@@ -399,7 +495,6 @@ function QueueCard({
 
   return (
     <div className={`rounded-xl px-3 py-2.5 border ${cardStyle}`}>
-      {/* Queue position label */}
       {position <= 1 && (
         <div className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${
           position === 0 ? "text-indigo-300" : "text-indigo-400/50"
@@ -407,7 +502,6 @@ function QueueCard({
           {position === 0 ? "Now" : "Next"}
         </div>
       )}
-      {/* Header row */}
       <div className="flex items-center gap-2">
         <span className={`font-extrabold shrink-0 ${
           position === 0 ? "text-2xl text-indigo-300" : "text-xl text-indigo-400"
@@ -433,7 +527,6 @@ function QueueCard({
         </button>
       </div>
 
-      {/* Items breakdown */}
       <div className="mt-2 space-y-1">
         {(order.order_items ?? []).map((oi) => (
           <div key={oi.id} className="flex items-start justify-between gap-1.5">
@@ -450,13 +543,11 @@ function QueueCard({
           </div>
         ))}
       </div>
-      {/* Order total */}
       <div className="mt-1.5 pt-1.5 border-t border-slate-700/50 flex justify-between">
         <span className="text-xs font-bold text-slate-400">Total</span>
         <span className="text-sm font-bold text-slate-200">{formatCurrency(order.total)}</span>
       </div>
 
-      {/* Action button */}
       {onPaid && isPending && (
         <button
           onClick={() => onPaid(order.id)}
