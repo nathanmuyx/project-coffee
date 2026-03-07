@@ -30,12 +30,13 @@ function classifyItem(name: string): { espresso: boolean; matcha: boolean } {
 }
 
 export default function OrdersPage() {
-  const [tab, setTab] = useState<"orders" | "pos">("orders");
+  const [tab, setTab] = useState<"orders" | "pos" | "sales">("orders");
   const [orders, setOrders] = useState<Order[]>([]);
   const prevOrderIdsRef = useRef<Set<string>>(new Set());
   const [gcashShowing, setGcashShowing] = useState(false);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
+  const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -81,6 +82,24 @@ export default function OrdersPage() {
       .order("sort_order")
       .then(({ data }) => { if (data) setMenuItems(data); });
   }, []);
+
+  const fetchCompletedOrders = useCallback(async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data } = await supabase
+      .from("orders")
+      .select("*, order_items(*)")
+      .in("status", ["completed", "cancelled"])
+      .gte("created_at", today.toISOString())
+      .order("created_at", { ascending: false });
+    if (data) setCompletedOrders(data);
+  }, []);
+
+  useEffect(() => {
+    fetchCompletedOrders();
+    const interval = setInterval(fetchCompletedOrders, POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchCompletedOrders]);
 
   const { espressoCount, matchaCount } = useMemo(() => {
     let espresso = 0;
@@ -223,6 +242,37 @@ export default function OrdersPage() {
     return Array.from(counts.entries()).map(([name, qty]) => ({ name, qty }));
   }, [makeOrders]);
 
+  const salesSummary = useMemo(() => {
+    const completed = completedOrders.filter((o) => o.status === "completed");
+    const cancelled = completedOrders.filter((o) => o.status === "cancelled");
+    const totalRevenue = completed.reduce((s, o) => s + o.total, 0);
+    const cashRevenue = completed.filter((o) => o.payment_method === "cash").reduce((s, o) => s + o.total, 0);
+    const gcashRevenue = completed.filter((o) => o.payment_method === "gcash").reduce((s, o) => s + o.total, 0);
+
+    const itemCounts = new Map<string, { qty: number; revenue: number }>();
+    for (const order of completed) {
+      for (const oi of order.order_items ?? []) {
+        const existing = itemCounts.get(oi.item_name) ?? { qty: 0, revenue: 0 };
+        itemCounts.set(oi.item_name, {
+          qty: existing.qty + oi.quantity,
+          revenue: existing.revenue + oi.item_price * oi.quantity,
+        });
+      }
+    }
+    const topItems = Array.from(itemCounts.entries())
+      .map(([name, { qty, revenue }]) => ({ name, qty, revenue }))
+      .sort((a, b) => b.qty - a.qty);
+
+    return {
+      completedCount: completed.length,
+      cancelledCount: cancelled.length,
+      totalRevenue,
+      cashRevenue,
+      gcashRevenue,
+      topItems,
+    };
+  }, [completedOrders]);
+
   const pendingCount = confirmOrders.length;
 
   return (
@@ -330,7 +380,7 @@ export default function OrdersPage() {
               </div>
             </div>
           </>
-        ) : (
+        ) : tab === "pos" ? (
           /* POS Tab */
           <div className="flex-1 overflow-hidden flex flex-col">
             {/* POS Header */}
@@ -420,6 +470,74 @@ export default function OrdersPage() {
               </div>
             )}
           </div>
+        ) : (
+          /* Sales Tab */
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+              <h1 className="text-lg font-extrabold">Today&apos;s Sales</h1>
+              <span className="text-sm text-slate-500">
+                {new Date().toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Revenue cards */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+                  <span className="text-xs text-slate-400 block mb-1">Total</span>
+                  <span className="text-xl font-extrabold text-white">{formatCurrency(salesSummary.totalRevenue)}</span>
+                </div>
+                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+                  <span className="text-xs text-emerald-400 block mb-1">Cash</span>
+                  <span className="text-xl font-extrabold text-emerald-300">{formatCurrency(salesSummary.cashRevenue)}</span>
+                </div>
+                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+                  <span className="text-xs text-blue-400 block mb-1">GCash</span>
+                  <span className="text-xl font-extrabold text-blue-300">{formatCurrency(salesSummary.gcashRevenue)}</span>
+                </div>
+              </div>
+
+              {/* Order counts */}
+              <div className="flex gap-3">
+                <div className="flex-1 bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center gap-3">
+                  <span className="text-2xl font-extrabold text-white">{salesSummary.completedCount}</span>
+                  <span className="text-sm text-slate-400">Completed</span>
+                </div>
+                {salesSummary.cancelledCount > 0 && (
+                  <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center gap-3">
+                    <span className="text-2xl font-extrabold text-red-400">{salesSummary.cancelledCount}</span>
+                    <span className="text-sm text-slate-400">Cancelled</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Item breakdown */}
+              {salesSummary.topItems.length > 0 && (
+                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-slate-700">
+                    <span className="text-xs font-bold text-slate-400">Items Sold</span>
+                  </div>
+                  <div className="divide-y divide-slate-700/50">
+                    {salesSummary.topItems.map(({ name, qty, revenue }) => (
+                      <div key={name} className="px-3 py-2 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-200 min-w-6 text-right">{qty}x</span>
+                          <span className="text-sm text-slate-300">{name}</span>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-400">{formatCurrency(revenue)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {salesSummary.completedCount === 0 && (
+                <div className="flex items-center justify-center h-32 text-slate-600 text-sm">
+                  No sales yet today
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
@@ -451,6 +569,17 @@ export default function OrdersPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
           </svg>
           <span className="text-xs font-bold">POS</span>
+        </button>
+        <button
+          onClick={() => setTab("sales")}
+          className={`flex-1 py-3 flex flex-col items-center gap-1 transition-colors ${
+            tab === "sales" ? "text-white" : "text-slate-500"
+          }`}
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          <span className="text-xs font-bold">Sales</span>
         </button>
       </div>
     </div>
