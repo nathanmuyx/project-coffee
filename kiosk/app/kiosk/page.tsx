@@ -346,17 +346,8 @@ export default function KioskPage() {
   if (flowState === "reviewing") {
     return (
       <div className="flex flex-col h-dvh overflow-hidden bg-white p-6">
-        <button
-          onClick={() => setFlowState("browsing")}
-          className="self-start mb-4 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
-        >
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Add More Items
-        </button>
-        <h2 className="text-3xl font-bold text-black mb-4">Review Your Order</h2>
-        <div className="flex-1 overflow-y-auto space-y-4">
+        <h2 className="text-3xl font-bold text-black mb-4 shrink-0">Review Your Order</h2>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
           {cart.map((item) => (
             <div
               key={item.menuItem.id}
@@ -373,9 +364,6 @@ export default function KioskPage() {
               />
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-xl text-black leading-tight">{item.menuItem.name}</div>
-                <div className="text-lg text-gray-500 mt-1">
-                  {formatCurrency(item.menuItem.price)} each
-                </div>
                 <div className="text-2xl font-extrabold text-black mt-1">
                   {formatCurrency(item.menuItem.price * item.quantity)}
                 </div>
@@ -383,16 +371,16 @@ export default function KioskPage() {
               <div className="flex items-center gap-3 shrink-0">
                 <button
                   onClick={() => updateQuantity(item.menuItem.id, -1)}
-                  className="w-16 h-16 rounded-2xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-4xl font-bold text-black active:scale-95 transition-transform"
+                  className="w-14 h-14 rounded-xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-3xl font-bold text-black active:scale-95 transition-transform"
                 >
                   -
                 </button>
-                <span className="w-10 text-center text-3xl font-extrabold text-black">
+                <span className="w-8 text-center text-2xl font-extrabold text-black">
                   {item.quantity}
                 </span>
                 <button
                   onClick={() => updateQuantity(item.menuItem.id, 1)}
-                  className="w-16 h-16 rounded-2xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-4xl font-bold text-black active:scale-95 transition-transform"
+                  className="w-14 h-14 rounded-xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-3xl font-bold text-black active:scale-95 transition-transform"
                 >
                   +
                 </button>
@@ -400,8 +388,8 @@ export default function KioskPage() {
             </div>
           ))}
         </div>
-        <div className="border-t border-gray-200 pt-4 mt-4">
-          <div className="flex justify-between items-end mb-4">
+        <div className="shrink-0 border-t border-gray-200 pt-5 mt-4">
+          <div className="flex justify-between items-end mb-5">
             <div>
               <span className="text-sm text-gray-400 uppercase tracking-wide">Total</span>
               <div className="text-lg text-gray-500">
@@ -410,13 +398,21 @@ export default function KioskPage() {
             </div>
             <span className="text-5xl font-extrabold text-black">{formatCurrency(total)}</span>
           </div>
-          <button
-            onClick={() => setFlowState("entering_chip")}
-            disabled={cart.length === 0}
-            className="w-full py-4 rounded-xl bg-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-xl transition-colors"
-          >
-            Checkout
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setFlowState("browsing")}
+              className="flex-1 py-6 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-2xl transition-colors"
+            >
+              Order More
+            </button>
+            <button
+              onClick={() => setFlowState("entering_chip")}
+              disabled={cart.length === 0}
+              className="flex-[2] py-6 rounded-2xl bg-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-3xl transition-colors"
+            >
+              Checkout
+            </button>
+          </div>
         </div>
       </div>
     );
