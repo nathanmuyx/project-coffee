@@ -96,7 +96,7 @@ export default function KioskPage() {
 
   // Poll for order acceptance (cash & gcash)
   useEffect(() => {
-    if ((flowState === "waiting_cash") && pendingOrderId) {
+    if ((flowState === "waiting_cash" || flowState === "gcash_qr") && pendingOrderId) {
       pollRef.current = setInterval(async () => {
         const { data } = await supabase
           .from("orders")
@@ -299,20 +299,10 @@ export default function KioskPage() {
     );
   }
 
-  // GCash QR screen
+  // GCash QR screen (also serves as waiting screen — polls for confirmation)
   if (flowState === "gcash_qr") {
     return (
       <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
-        <button
-          onClick={() => setFlowState("payment")}
-          className="self-start mb-6 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
-        >
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back
-        </button>
-
         <h2 className="text-3xl font-bold text-black mb-2">Scan to pay with GCash</h2>
         <div className="text-4xl font-extrabold text-black mb-6">{formatCurrency(total)}</div>
 
@@ -332,18 +322,12 @@ export default function KioskPage() {
           />
         </div>
 
+        <p className="text-lg text-gray-400 mb-4 animate-pulse">Waiting for confirmation...</p>
         <button
-          onClick={async () => {
-            const orderId = await submitOrder("gcash");
-            if (orderId) {
-              setPendingOrderId(orderId);
-              setFlowState("waiting_cash");
-            }
-          }}
-          disabled={submitting}
-          className="w-full max-w-sm py-4 rounded-xl bg-black hover:bg-gray-800 disabled:opacity-50 text-white font-bold text-xl transition-colors"
+          onClick={cancelPendingOrder}
+          className="px-8 py-4 rounded-xl bg-gray-100 hover:bg-gray-200 text-black font-bold text-lg transition-colors"
         >
-          {submitting ? "Submitting..." : "I\u2019ve Paid"}
+          Cancel
         </button>
       </div>
     );
@@ -390,11 +374,16 @@ export default function KioskPage() {
           </button>
 
           <button
-            onClick={() => {
+            onClick={async () => {
               setPaymentMethod("gcash");
-              setFlowState("gcash_qr");
+              const orderId = await submitOrder("gcash");
+              if (orderId) {
+                setPendingOrderId(orderId);
+                setFlowState("gcash_qr");
+              }
             }}
-            className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95"
+            disabled={submitting}
+            className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95 disabled:opacity-50"
           >
             <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
               <svg className="w-10 h-10 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
