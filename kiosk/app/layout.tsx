@@ -38,9 +38,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark h-dvh overflow-hidden">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-900 text-slate-50`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-900 text-slate-50 h-dvh overflow-hidden`}
       >
         {children}
         <InstallPrompt />
