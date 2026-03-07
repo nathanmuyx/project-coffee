@@ -140,6 +140,7 @@ export default function OrdersPage() {
       .update({ status: "completed" })
       .eq("id", orderId);
     if (error) fetchOrders();
+    fetchCompletedOrders();
   };
 
   const handleAcceptPayment = async (orderId: string) => {
@@ -162,6 +163,7 @@ export default function OrdersPage() {
       .update({ status: "cancelled" })
       .eq("id", orderId);
     if (error) fetchOrders();
+    fetchCompletedOrders();
   };
 
   const toggleGcash = () => {
