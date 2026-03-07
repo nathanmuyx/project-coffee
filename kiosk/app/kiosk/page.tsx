@@ -31,6 +31,7 @@ export default function KioskPage() {
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [gcashOverride, setGcashOverride] = useState(false);
   const [takenNumbers, setTakenNumbers] = useState<number[]>([]);
+  const [qrLoaded, setQrLoaded] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -66,6 +67,13 @@ export default function KioskPage() {
   useEffect(() => {
     if (flowState === "entering_chip") fetchTakenNumbers();
   }, [flowState, fetchTakenNumbers]);
+
+  // Preload and cache GCash QR image
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setQrLoaded(true);
+    img.src = "/gcash-qr.png";
+  }, []);
 
   // Listen for GCash display override from /orders
   useEffect(() => {
@@ -208,12 +216,19 @@ export default function KioskPage() {
     return (
       <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
         <h2 className="text-3xl font-bold text-black mb-2">Scan to pay with GCash</h2>
-        <div className="mb-6 flex-1 max-h-[70vh]">
+        <div className="mb-6 flex-1 max-h-[70vh] flex items-center justify-center">
+          {!qrLoaded && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
+              <span className="text-gray-400 text-sm">Loading QR...</span>
+            </div>
+          )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/gcash-qr.png"
             alt="GCash QR Code"
-            className="h-full object-contain rounded-2xl"
+            className={`h-full object-contain rounded-2xl ${qrLoaded ? "" : "hidden"}`}
+            onLoad={() => setQrLoaded(true)}
           />
         </div>
       </div>
@@ -292,17 +307,19 @@ export default function KioskPage() {
         <h2 className="text-3xl font-bold text-black mb-2">Scan to pay with GCash</h2>
         <div className="text-4xl font-extrabold text-black mb-6">{formatCurrency(total)}</div>
 
-        <div className="mb-6 flex-1 max-h-[60vh]">
+        <div className="mb-6 flex-1 max-h-[60vh] flex items-center justify-center">
+          {!qrLoaded && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
+              <span className="text-gray-400 text-sm">Loading QR...</span>
+            </div>
+          )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/gcash-qr.png"
             alt="GCash QR Code"
-            className="h-full object-contain rounded-2xl"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-              (e.target as HTMLImageElement).parentElement!.innerHTML =
-                '<div class="w-full h-full flex items-center justify-center text-gray-400 text-sm">QR placeholder<br/>Add gcash-qr.png to /public</div>';
-            }}
+            className={`h-full object-contain rounded-2xl ${qrLoaded ? "" : "hidden"}`}
+            onLoad={() => setQrLoaded(true)}
           />
         </div>
 
