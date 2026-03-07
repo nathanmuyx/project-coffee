@@ -322,13 +322,7 @@ export default function KioskPage() {
           />
         </div>
 
-        <p className="text-lg text-gray-400 mb-4 animate-pulse">Waiting for confirmation...</p>
-        <button
-          onClick={cancelPendingOrder}
-          className="px-8 py-4 rounded-xl bg-gray-100 hover:bg-gray-200 text-black font-bold text-lg transition-colors"
-        >
-          Cancel
-        </button>
+        <p className="text-lg text-gray-400 animate-pulse">Waiting for confirmation...</p>
       </div>
     );
   }
