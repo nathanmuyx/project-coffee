@@ -531,7 +531,53 @@ export default function OrdersPage() {
                 </div>
               )}
 
-              {salesSummary.completedCount === 0 && (
+              {/* Individual orders */}
+              {completedOrders.length > 0 && (
+                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-slate-700">
+                    <span className="text-xs font-bold text-slate-400">Order History</span>
+                  </div>
+                  <div className="divide-y divide-slate-700/50">
+                    {completedOrders.map((order) => (
+                      <div key={order.id} className="px-3 py-2.5">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            {order.chip_number && (
+                              <span className="text-sm font-extrabold text-slate-200">#{order.chip_number}</span>
+                            )}
+                            <span className={`text-xs font-semibold ${
+                              order.payment_method === "gcash" ? "text-blue-400" : "text-emerald-400"
+                            }`}>
+                              {order.payment_method === "gcash" ? "GCash" : "Cash"}
+                            </span>
+                            {order.status === "cancelled" && (
+                              <span className="text-xs font-semibold text-red-400">Cancelled</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-sm font-bold ${order.status === "cancelled" ? "text-red-400 line-through" : "text-slate-200"}`}>
+                              {formatCurrency(order.total)}
+                            </span>
+                            <span className="text-xs text-slate-600">
+                              {new Date(order.created_at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                          {(order.order_items ?? []).map((oi) => (
+                            <span key={oi.id} className="text-xs text-slate-400">
+                              {oi.quantity > 1 && <span className="text-slate-500">{oi.quantity}x </span>}
+                              {oi.item_name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {completedOrders.length === 0 && (
                 <div className="flex items-center justify-center h-32 text-slate-600 text-sm">
                   No sales yet today
                 </div>
