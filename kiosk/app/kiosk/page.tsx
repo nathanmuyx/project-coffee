@@ -168,7 +168,7 @@ export default function KioskPage() {
   // Success screen
   if (flowState === "success") {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
+      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
         <div className="w-24 h-24 rounded-full bg-gray-100 flex items-center justify-center mb-6">
           <svg className="w-14 h-14 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -200,7 +200,7 @@ export default function KioskPage() {
   // Waiting for cash payment acceptance
   if (flowState === "waiting_cash") {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
+      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
         <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mb-6 animate-pulse">
           <svg className="w-10 h-10 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -223,7 +223,7 @@ export default function KioskPage() {
   // GCash QR screen
   if (flowState === "gcash_qr") {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
+      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
         <button
           onClick={() => setFlowState("payment")}
           className="self-start mb-6 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
@@ -271,7 +271,7 @@ export default function KioskPage() {
   // Payment method selection
   if (flowState === "payment") {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-white p-8">
+      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
         <button
           onClick={() => setFlowState("entering_chip")}
           className="self-start mb-6 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
@@ -330,7 +330,7 @@ export default function KioskPage() {
   // Waiting number input
   if (flowState === "entering_chip") {
     return (
-      <div className="h-screen bg-white">
+      <div className="h-dvh overflow-hidden bg-white">
         <ChipNumberInput
           onSubmit={(num) => {
             setChipNumber(num);
@@ -345,7 +345,7 @@ export default function KioskPage() {
   // Reviewing cart
   if (flowState === "reviewing") {
     return (
-      <div className="flex flex-col h-screen bg-white p-6">
+      <div className="flex flex-col h-dvh overflow-hidden bg-white p-6">
         <button
           onClick={() => setFlowState("browsing")}
           className="self-start mb-4 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
@@ -424,7 +424,7 @@ export default function KioskPage() {
 
   // Browsing (default)
   return (
-    <div className="flex flex-col h-screen bg-white">
+    <div className="flex flex-col h-dvh overflow-hidden bg-white">
       <div className="p-4 pb-0">
         <p className="text-gray-500 text-lg">Tap items to add to your order</p>
       </div>
