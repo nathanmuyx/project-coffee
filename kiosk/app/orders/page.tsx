@@ -39,7 +39,6 @@ export default function OrdersPage() {
   const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
   const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
   const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
-  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -367,7 +366,7 @@ export default function OrdersPage() {
                         }
                       }}
                       onCancel={handleCancel}
-                      onViewReceipt={setReceiptUrl}
+
                     />
                   ))}
                 </div>
@@ -403,7 +402,7 @@ export default function OrdersPage() {
                       position={i}
                       onDone={handleComplete}
                       onCancel={handleCancel}
-                      onViewReceipt={setReceiptUrl}
+
                     />
                   ))}
                 </div>
@@ -596,16 +595,6 @@ export default function OrdersPage() {
                               }`}>
                                 {order.payment_method === "gcash" ? "GCash" : order.payment_method === "utang" ? "Utang" : "Cash"}
                               </span>
-                              {order.receipt_url && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); setReceiptUrl(order.receipt_url!); }}
-                                  className="w-5 h-5 rounded bg-blue-500/20 flex items-center justify-center"
-                                >
-                                  <svg className="w-3 h-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                  </svg>
-                                </button>
-                              )}
                               {order.status === "cancelled" && (
                                 <span className="text-xs font-semibold text-red-400">Cancelled</span>
                               )}
@@ -709,26 +698,6 @@ export default function OrdersPage() {
           <span className="text-xs font-bold">Sales</span>
         </button>
       </div>
-
-      {/* Receipt viewer modal */}
-      {receiptUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setReceiptUrl(null)}>
-          <div className="relative max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setReceiptUrl(null)}
-              className="absolute -top-10 right-0 text-white/70 hover:text-white text-sm font-bold"
-            >
-              Close
-            </button>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={receiptUrl}
-              alt="GCash receipt"
-              className="w-full rounded-xl"
-            />
-          </div>
-        </div>
-      )}
 
       {/* Cash payment modal */}
       {cashModalOrder && (
@@ -868,14 +837,12 @@ function QueueCard({
   onPaid,
   onDone,
   onCancel,
-  onViewReceipt,
 }: {
   order: Order;
   position: number;
   onPaid?: (id: string) => void;
   onDone?: (id: string) => void;
   onCancel: (id: string) => void;
-  onViewReceipt?: (url: string) => void;
 }) {
   const [elapsed, setElapsed] = useState("");
   const isPending = order.status === "pending";
@@ -937,17 +904,6 @@ function QueueCard({
             </span>
             <span className="text-xs text-slate-500">{formatCurrency(order.total)}</span>
             <span className="text-xs text-slate-600">{elapsed}</span>
-            {order.receipt_url && onViewReceipt && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onViewReceipt(order.receipt_url!); }}
-                className="ml-1 w-5 h-5 rounded bg-blue-500/20 flex items-center justify-center"
-                title="View receipt"
-              >
-                <svg className="w-3 h-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </button>
-            )}
           </div>
         </div>
         <button
