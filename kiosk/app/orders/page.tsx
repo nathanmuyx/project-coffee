@@ -877,21 +877,13 @@ function QueueCard({
         </div>
       )}
       <div className="flex items-center gap-3">
-        {isPending ? (
-          <div className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 ${
-            position === 0 ? "bg-white" : "bg-slate-600"
-          }`}>
-            <span className={`text-2xl font-extrabold ${position === 0 ? "text-black" : "text-white"}`}>
-              {order.chip_number ?? "?"}
-            </span>
-          </div>
-        ) : (
-          <span className={`font-extrabold shrink-0 ${
-            position === 0 ? "text-2xl text-indigo-300" : "text-xl text-indigo-400"
-          }`}>
+        <div className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 ${
+          position === 0 ? "bg-white" : "bg-slate-600"
+        }`}>
+          <span className={`text-2xl font-extrabold ${position === 0 ? "text-black" : "text-white"}`}>
             {order.chip_number ?? "?"}
           </span>
-        )}
+        </div>
         <div className="flex-1 min-w-0">
           {isPending && (
             <span className="text-xs text-slate-400 block mb-0.5">Give block</span>
