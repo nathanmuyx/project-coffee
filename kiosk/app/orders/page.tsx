@@ -203,7 +203,7 @@ export default function OrdersPage() {
 
   const posTotal = Array.from(posCart.values()).reduce((s, { item, qty }) => s + item.price * qty, 0);
 
-  const submitPosOrder = async (method: "cash" | "gcash") => {
+  const submitPosOrder = async (method: "cash" | "gcash" | "utang") => {
     if (posCart.size === 0) return;
     const { data: order, error: orderError } = await supabase
       .from("orders")
@@ -257,6 +257,7 @@ export default function OrdersPage() {
     const totalRevenue = completed.reduce((s, o) => s + o.total, 0);
     const cashRevenue = completed.filter((o) => o.payment_method === "cash").reduce((s, o) => s + o.total, 0);
     const gcashRevenue = completed.filter((o) => o.payment_method === "gcash").reduce((s, o) => s + o.total, 0);
+    const utangRevenue = completed.filter((o) => o.payment_method === "utang").reduce((s, o) => s + o.total, 0);
 
     const itemCounts = new Map<string, { qty: number; revenue: number }>();
     for (const order of completed) {
@@ -278,6 +279,7 @@ export default function OrdersPage() {
       totalRevenue,
       cashRevenue,
       gcashRevenue,
+      utangRevenue,
       topItems,
     };
   }, [completedOrders]);
@@ -475,6 +477,12 @@ export default function OrdersPage() {
                   >
                     GCash
                   </button>
+                  <button
+                    onClick={() => submitPosOrder("utang")}
+                    className="px-4 py-2 rounded-lg bg-orange-500/20 text-orange-400 text-sm font-bold hover:bg-orange-500/30 transition-colors"
+                  >
+                    Utang
+                  </button>
                 </div>
               </div>
             )}
@@ -491,7 +499,7 @@ export default function OrdersPage() {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Revenue cards */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
                   <span className="text-xs text-slate-400 block mb-1">Total</span>
                   <span className="text-xl font-extrabold text-white">{formatCurrency(salesSummary.totalRevenue)}</span>
@@ -503,6 +511,10 @@ export default function OrdersPage() {
                 <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
                   <span className="text-xs text-blue-400 block mb-1">GCash</span>
                   <span className="text-xl font-extrabold text-blue-300">{formatCurrency(salesSummary.gcashRevenue)}</span>
+                </div>
+                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
+                  <span className="text-xs text-orange-400 block mb-1">Utang</span>
+                  <span className="text-xl font-extrabold text-orange-300">{formatCurrency(salesSummary.utangRevenue)}</span>
                 </div>
               </div>
 
@@ -556,9 +568,9 @@ export default function OrdersPage() {
                                 <span className="text-sm font-extrabold text-slate-200">#{order.chip_number}</span>
                               )}
                               <span className={`text-xs font-semibold ${
-                                order.payment_method === "gcash" ? "text-blue-400" : "text-emerald-400"
+                                order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-400"
                               }`}>
-                                {order.payment_method === "gcash" ? "GCash" : "Cash"}
+                                {order.payment_method === "gcash" ? "GCash" : order.payment_method === "utang" ? "Utang" : "Cash"}
                               </span>
                               {order.status === "cancelled" && (
                                 <span className="text-xs font-semibold text-red-400">Cancelled</span>
@@ -721,9 +733,9 @@ function QueueCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`text-xs font-semibold ${
-              order.payment_method === "gcash" ? "text-blue-400" : "text-emerald-500"
+              order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-500"
             }`}>
-              {order.payment_method === "gcash" ? "GCash" : "Cash"}
+              {order.payment_method === "gcash" ? "GCash" : order.payment_method === "utang" ? "Utang" : "Cash"}
             </span>
             <span className="text-xs text-slate-500">{formatCurrency(order.total)}</span>
             <span className="text-xs text-slate-600">{elapsed}</span>
