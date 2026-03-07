@@ -713,12 +713,14 @@ export default function OrdersPage() {
 }
 
 function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfirm: () => void; onClose: () => void }) {
-  const [cashGiven, setCashGiven] = useState(0);
+  const [inputStr, setInputStr] = useState("");
+  const cashGiven = parseInt(inputStr, 10) || 0;
   const change = cashGiven - order.total;
-  const isExact = cashGiven === order.total;
   const hasEnough = cashGiven >= order.total;
 
-  const presets = [200, 300, 500, 1000];
+  const tapDigit = (d: string) => setInputStr((v) => (v + d).slice(0, 6));
+  const tapBackspace = () => setInputStr((v) => v.slice(0, -1));
+  const tapPreset = (amt: number) => setInputStr(String(amt));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -736,12 +738,12 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
           <div className="text-3xl font-extrabold text-white">{formatCurrency(order.total)}</div>
         </div>
 
-        {/* Preset amounts */}
-        <div className="grid grid-cols-4 gap-2 mb-3">
-          {presets.map((amt) => (
+        {/* Presets */}
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          {[200, 500, 1000].map((amt) => (
             <button
               key={amt}
-              onClick={() => setCashGiven(amt)}
+              onClick={() => tapPreset(amt)}
               className={`py-2.5 rounded-xl text-sm font-bold transition-colors ${
                 cashGiven === amt
                   ? "bg-blue-500 text-white"
@@ -753,37 +755,44 @@ function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfi
           ))}
         </div>
 
-        {/* Increment buttons */}
-        <div className="flex gap-2 mb-4">
+        {/* Calculator display */}
+        <div className="bg-slate-900 rounded-xl px-4 py-2.5 mb-3 text-right">
+          <span className="text-2xl font-extrabold text-white">
+            {inputStr ? formatCurrency(cashGiven) : <span className="text-slate-600">₱0</span>}
+          </span>
+        </div>
+
+        {/* Calculator keypad */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {["1","2","3","4","5","6","7","8","9"].map((d) => (
+            <button
+              key={d}
+              onClick={() => tapDigit(d)}
+              className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-lg font-bold text-white transition-colors active:scale-95"
+            >
+              {d}
+            </button>
+          ))}
           <button
-            onClick={() => setCashGiven((v) => v + 100)}
-            className="flex-1 py-2.5 rounded-xl bg-slate-700 text-slate-300 hover:bg-slate-600 text-sm font-bold transition-colors"
+            onClick={() => setInputStr("")}
+            className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-sm font-bold text-slate-400 transition-colors active:scale-95"
           >
-            +{formatCurrency(100)}
+            C
           </button>
           <button
-            onClick={() => setCashGiven((v) => v + 500)}
-            className="flex-1 py-2.5 rounded-xl bg-slate-700 text-slate-300 hover:bg-slate-600 text-sm font-bold transition-colors"
+            onClick={() => tapDigit("0")}
+            className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-lg font-bold text-white transition-colors active:scale-95"
           >
-            +{formatCurrency(500)}
+            0
           </button>
-          <div className="flex-1 relative">
-            <input
-              type="number"
-              placeholder="Custom"
-              className="w-full py-2.5 rounded-xl bg-slate-700 text-white text-sm font-bold text-center placeholder-slate-500 outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const val = parseInt((e.target as HTMLInputElement).value, 10);
-                  if (val > 0) setCashGiven(val);
-                }
-              }}
-              onBlur={(e) => {
-                const val = parseInt(e.target.value, 10);
-                if (val > 0) setCashGiven(val);
-              }}
-            />
-          </div>
+          <button
+            onClick={tapBackspace}
+            className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white transition-colors active:scale-95 flex items-center justify-center"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414-6.414a2 2 0 011.414-.586H19a2 2 0 012 2v10a2 2 0 01-2 2h-8.172a2 2 0 01-1.414-.586L3 12z" />
+            </svg>
+          </button>
         </div>
 
         {/* Cash given & change */}
