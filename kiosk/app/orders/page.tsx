@@ -1208,19 +1208,26 @@ function SwipeableOrderRow({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className={`relative bg-slate-800 px-3 py-2 ${isCancelled ? "opacity-40" : ""}`}
+        className="relative bg-slate-800 px-3 py-2"
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <span className={`text-xs font-bold ${
-              order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-400"
-            }`}>
-              {order.payment_method === "gcash" ? "G" : order.payment_method === "utang" ? "U" : "C"}
-            </span>
-            <span className="text-sm text-slate-300 truncate">{itemNames}</span>
+            {isCancelled ? (
+              <span className="text-xs font-bold text-red-400">X</span>
+            ) : (
+              <span className={`text-xs font-bold ${
+                order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-400"
+              }`}>
+                {order.payment_method === "gcash" ? "G" : order.payment_method === "utang" ? "U" : "C"}
+              </span>
+            )}
+            <span className={`text-sm truncate ${isCancelled ? "text-slate-500 line-through" : "text-slate-300"}`}>{itemNames}</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {onMarkPaid && (
+            {isCancelled && (
+              <span className="text-[10px] font-bold text-red-400/60">Cancelled</span>
+            )}
+            {!isCancelled && onMarkPaid && (
               <button
                 onClick={() => onMarkPaid(order.id)}
                 className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
@@ -1228,7 +1235,7 @@ function SwipeableOrderRow({
                 Paid
               </button>
             )}
-            <span className="text-sm font-bold text-slate-200">{formatCurrency(order.total)}</span>
+            <span className={`text-sm font-bold ${isCancelled ? "text-slate-500" : "text-slate-200"}`}>{formatCurrency(order.total)}</span>
             <span className="text-[10px] text-slate-500">{time}</span>
           </div>
         </div>
