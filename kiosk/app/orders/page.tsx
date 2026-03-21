@@ -1169,7 +1169,7 @@ function SwipeableOrderRow({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    const dx = e.touches[0].clientX - startXRef.current;
+    const dx = Math.min(0, e.touches[0].clientX - startXRef.current); // left only
     offsetRef.current = dx;
     if (rowRef.current) {
       rowRef.current.style.transform = `translateX(${dx}px)`;
@@ -1183,14 +1183,9 @@ function SwipeableOrderRow({
       rowRef.current.style.transition = "transform 0.2s ease-out";
     }
 
-    if (dx < -100) {
-      // Swipe left → delete
+    if (dx < -80) {
       if (rowRef.current) rowRef.current.style.transform = "translateX(-100%)";
       setTimeout(() => onDelete(order.id), 200);
-    } else if (dx > 100 && onMarkPaid) {
-      // Swipe right → mark paid (utang only)
-      if (rowRef.current) rowRef.current.style.transform = "translateX(100%)";
-      setTimeout(() => onMarkPaid(order.id), 200);
     } else {
       if (rowRef.current) rowRef.current.style.transform = "translateX(0)";
       setSwiping(false);
@@ -1203,16 +1198,9 @@ function SwipeableOrderRow({
 
   return (
     <div className="relative overflow-hidden rounded-lg">
-      {/* Background actions — only visible during swipe */}
-      <div className={`absolute inset-0 flex ${swiping ? "" : "hidden"}`}>
-        {onMarkPaid && (
-          <div className="flex-1 bg-emerald-600 flex items-center pl-4">
-            <span className="text-xs font-bold text-white">Paid</span>
-          </div>
-        )}
-        <div className={`flex-1 bg-red-600 flex items-center justify-end pr-4 ${onMarkPaid ? "" : "ml-auto"}`}>
-          <span className="text-xs font-bold text-white">Delete</span>
-        </div>
+      {/* Delete background — only visible during swipe */}
+      <div className={`absolute inset-0 bg-red-600 flex items-center justify-end pr-4 ${swiping ? "" : "hidden"}`}>
+        <span className="text-xs font-bold text-white">Delete</span>
       </div>
       {/* Foreground row */}
       <div
@@ -1232,6 +1220,14 @@ function SwipeableOrderRow({
             <span className="text-sm text-slate-300 truncate">{itemNames}</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {onMarkPaid && (
+              <button
+                onClick={() => onMarkPaid(order.id)}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+              >
+                Paid
+              </button>
+            )}
             <span className="text-sm font-bold text-slate-200">{formatCurrency(order.total)}</span>
             <span className="text-[10px] text-slate-500">{time}</span>
           </div>
