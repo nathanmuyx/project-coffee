@@ -1160,10 +1160,12 @@ function SwipeableOrderRow({
   const startXRef = useRef(0);
   const offsetRef = useRef(0);
   const rowRef = useRef<HTMLDivElement>(null);
+  const [swiping, setSwiping] = useState(false);
   const isCancelled = order.status === "cancelled";
 
   const handleTouchStart = (e: React.TouchEvent) => {
     startXRef.current = e.touches[0].clientX;
+    setSwiping(true);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -1191,6 +1193,7 @@ function SwipeableOrderRow({
       setTimeout(() => onMarkPaid(order.id), 200);
     } else {
       if (rowRef.current) rowRef.current.style.transform = "translateX(0)";
+      setSwiping(false);
     }
     offsetRef.current = 0;
   };
@@ -1200,8 +1203,8 @@ function SwipeableOrderRow({
 
   return (
     <div className="relative overflow-hidden rounded-lg">
-      {/* Background actions */}
-      <div className="absolute inset-0 flex">
+      {/* Background actions — only visible during swipe */}
+      <div className={`absolute inset-0 flex ${swiping ? "" : "hidden"}`}>
         {onMarkPaid && (
           <div className="flex-1 bg-emerald-600 flex items-center pl-4">
             <span className="text-xs font-bold text-white">Paid</span>
