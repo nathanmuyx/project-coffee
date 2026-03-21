@@ -124,11 +124,14 @@ export default function KioskPage() {
     setCart((prev) => {
       const existing = prev.find((c) => c.menuItem.id === item.id);
       if (existing) {
+        const newQty = existing.quantity + qty;
+        if (newQty <= 0) return prev.filter((c) => c.menuItem.id !== item.id);
         return prev.map((c) =>
-          c.menuItem.id === item.id ? { ...c, quantity: c.quantity + qty } : c
+          c.menuItem.id === item.id ? { ...c, quantity: newQty } : c
         );
       }
-      return [...prev, { menuItem: item, quantity: qty }];
+      if (qty > 0) return [...prev, { menuItem: item, quantity: qty }];
+      return prev;
     });
   }, []);
 

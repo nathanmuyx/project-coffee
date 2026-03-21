@@ -25,14 +25,17 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
 
   const handleTap = (drink: DisplayDrink) => {
     if (drink.variants.length === 1) {
-      onAddItem(drink.variants[0].menuItem, 1);
+      const item = drink.variants[0].menuItem;
+      const inCart = cartQtyMap.get(item.id) ?? 0;
+      onAddItem(item, inCart > 0 ? -inCart : 1);
     } else {
       setVariantPicker(drink);
     }
   };
 
   const handleVariantPick = (variant: { label: string; menuItem: MenuItem }) => {
-    onAddItem(variant.menuItem, 1);
+    const inCart = cartQtyMap.get(variant.menuItem.id) ?? 0;
+    onAddItem(variant.menuItem, inCart > 0 ? -inCart : 1);
     setVariantPicker(null);
   };
 
@@ -49,7 +52,9 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
               <button
                 key={drink.name}
                 onClick={() => handleTap(drink)}
-                className="relative flex flex-col rounded-2xl bg-white border border-gray-200 overflow-hidden transition-all active:scale-[0.97] text-left shadow-sm"
+                className={`relative flex flex-col rounded-2xl overflow-hidden transition-all active:scale-[0.97] text-left shadow-sm ${
+                  badgeQty > 0 ? "bg-white border-2 border-black ring-2 ring-black/10" : "bg-white border border-gray-200"
+                }`}
               >
                 {badgeQty > 0 && (
                   <span className="absolute top-2 right-2 z-10 min-w-10 h-10 flex items-center justify-center rounded-full bg-black text-white text-xl font-bold px-2">
@@ -107,18 +112,21 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
             <div className="flex gap-4">
               {variantPicker.variants.map((v) => {
                 const isHot = /hot/i.test(v.label);
+                const isInCart = (cartQtyMap.get(v.menuItem.id) ?? 0) > 0;
                 return (
                   <button
                     key={v.label}
                     onClick={() => handleVariantPick(v)}
-                    className="flex-1 flex flex-col items-center gap-3 py-10 rounded-2xl bg-gray-100 hover:bg-gray-200 border-2 border-gray-200 text-center transition-colors active:scale-95"
+                    className={`flex-1 flex flex-col items-center gap-3 py-10 rounded-2xl text-center transition-colors active:scale-95 ${
+                      isInCart ? "bg-black text-white border-2 border-black" : "bg-gray-100 hover:bg-gray-200 border-2 border-gray-200"
+                    }`}
                   >
                     {isHot
                       ? <Fire size={52} weight="fill" className="text-red-500" />
                       : <Snowflake size={52} weight="fill" className="text-blue-500" />
                     }
-                    <span className="text-4xl font-extrabold text-black">{v.label}</span>
-                    <span className="text-2xl text-gray-500 font-semibold">
+                    <span className={`text-4xl font-extrabold ${isInCart ? "text-white" : "text-black"}`}>{v.label}</span>
+                    <span className={`text-2xl font-semibold ${isInCart ? "text-gray-300" : "text-gray-500"}`}>
                       {formatCurrency(v.menuItem.price)}
                     </span>
                   </button>
