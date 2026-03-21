@@ -5,8 +5,10 @@ import { supabase } from "@/lib/supabase";
 import { Order, MenuItem } from "@/lib/types";
 import { formatCurrency, getShortName } from "@/lib/utils";
 import { sendShowGcash, sendHideGcash } from "@/lib/kiosk-channel";
+import { Snowflake, Fire } from "@phosphor-icons/react";
 
 const POLL_INTERVAL = 3000;
+const MAX_BLOCK = 20;
 
 const MATCHA_KEYWORDS = ["matcha"];
 const COFFEE_KEYWORDS = ["latte", "americano", "espresso", "coffee"];
@@ -30,17 +32,13 @@ function classifyItem(name: string): { espresso: boolean; matcha: boolean } {
 }
 
 export default function OrdersPage() {
-  const [tab, setTab] = useState<"orders" | "pos" | "sales">("orders");
+  const [tab, setTab] = useState<"orders" | "pos" | "menu">("orders");
   const [orders, setOrders] = useState<Order[]>([]);
   const prevOrderIdsRef = useRef<Set<string>>(new Set());
   const [gcashShowing, setGcashShowing] = useState(false);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
-  const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
-  const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
   const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
-  const [salesDates, setSalesDates] = useState<string[]>([]);
-  const [selectedSalesDate, setSelectedSalesDate] = useState<string>("");
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -78,57 +76,18 @@ export default function OrdersPage() {
     return () => clearInterval(interval);
   }, [fetchOrders]);
 
-  useEffect(() => {
-    supabase
+  const fetchMenuItems = useCallback(async () => {
+    const { data } = await supabase
       .from("menu_items")
       .select("*")
-      .eq("is_available", true)
-      .order("sort_order")
-      .then(({ data }) => { if (data) setMenuItems(data); });
+      .order("sort_order");
+    if (data) setMenuItems(data);
   }, []);
 
-  // Fetch available sales dates
-  const fetchSalesDates = useCallback(async () => {
-    const { data } = await supabase
-      .from("orders")
-      .select("created_at")
-      .in("status", ["completed", "cancelled"])
-      .order("created_at", { ascending: false });
-    if (data) {
-      const unique = [...new Set(data.map((o) =>
-        new Date(o.created_at).toLocaleDateString("en-CA")
-      ))];
-      setSalesDates(unique);
-      if (!selectedSalesDate) {
-        setSelectedSalesDate(new Date().toLocaleDateString("en-CA"));
-      }
-    }
-  }, [selectedSalesDate]);
-
   useEffect(() => {
-    fetchSalesDates();
-  }, [fetchSalesDates]);
+    fetchMenuItems();
+  }, [fetchMenuItems]);
 
-  const fetchCompletedOrders = useCallback(async () => {
-    const date = selectedSalesDate ? new Date(selectedSalesDate) : new Date();
-    date.setHours(0, 0, 0, 0);
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
-    const { data } = await supabase
-      .from("orders")
-      .select("*, order_items(*)")
-      .in("status", ["completed", "cancelled"])
-      .gte("created_at", date.toISOString())
-      .lt("created_at", nextDay.toISOString())
-      .order("created_at", { ascending: false });
-    if (data) setCompletedOrders(data);
-  }, [selectedSalesDate]);
-
-  useEffect(() => {
-    fetchCompletedOrders();
-    const interval = setInterval(fetchCompletedOrders, POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [fetchCompletedOrders]);
 
   const { espressoCount, matchaCount } = useMemo(() => {
     let espresso = 0;
@@ -168,7 +127,6 @@ export default function OrdersPage() {
       .update({ status: "completed" })
       .eq("id", orderId);
     if (error) fetchOrders();
-    fetchCompletedOrders();
   };
 
   const handleAcceptPayment = async (orderId: string) => {
@@ -191,7 +149,6 @@ export default function OrdersPage() {
       .update({ status: "cancelled" })
       .eq("id", orderId);
     if (error) fetchOrders();
-    fetchCompletedOrders();
   };
 
   const toggleGcash = () => {
@@ -232,16 +189,32 @@ export default function OrdersPage() {
   };
 
   const posTotal = Array.from(posCart.values()).reduce((s, { item, qty }) => s + item.price * qty, 0);
+  const posTotalCost = Array.from(posCart.values()).reduce((s, { item, qty }) => s + item.cost * qty, 0);
+
+  const assignNextNumber = async (): Promise<number> => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data } = await supabase
+      .from("orders")
+      .select("chip_number")
+      .gte("created_at", today.toISOString())
+      .not("chip_number", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const last = data?.[0]?.chip_number ?? 0;
+    return (last % MAX_BLOCK) + 1;
+  };
 
   const submitPosOrder = async (method: "cash" | "gcash" | "utang") => {
     if (posCart.size === 0) return;
+    const chipNumber = await assignNextNumber();
     const { data: order, error: orderError } = await supabase
       .from("orders")
       .insert({
         total: posTotal,
-        total_cost: 0,
+        total_cost: posTotalCost,
         status: "preparing",
-        chip_number: null,
+        chip_number: chipNumber,
         payment_method: method,
       })
       .select("id")
@@ -252,27 +225,12 @@ export default function OrdersPage() {
       menu_item_id: item.id,
       item_name: item.name,
       item_price: item.price,
-      item_cost: 0,
+      item_cost: item.cost,
       quantity: qty,
     }));
     await supabase.from("order_items").insert(items);
     setPosCart(new Map());
     fetchOrders();
-  };
-
-  const handleMarkUtangPaid = async (orderId: string) => {
-    setCompletedOrders((prev) =>
-      prev.map((o) => o.id === orderId ? { ...o, payment_method: "cash" as const } : o)
-    );
-    await supabase.from("orders").update({ payment_method: "cash" }).eq("id", orderId);
-  };
-
-  const handleDeleteOrder = async () => {
-    if (!deleteOrderId) return;
-    setCompletedOrders((prev) => prev.filter((o) => o.id !== deleteOrderId));
-    await supabase.from("order_items").delete().eq("order_id", deleteOrderId);
-    await supabase.from("orders").delete().eq("id", deleteOrderId);
-    setDeleteOrderId(null);
   };
 
   const confirmOrders = orders.filter((o) => o.status === "pending");
@@ -288,38 +246,10 @@ export default function OrdersPage() {
     return Array.from(counts.entries()).map(([name, qty]) => ({ name, qty }));
   }, [makeOrders]);
 
-  const salesSummary = useMemo(() => {
-    const completed = completedOrders.filter((o) => o.status === "completed");
-    const cancelled = completedOrders.filter((o) => o.status === "cancelled");
-    const totalRevenue = completed.reduce((s, o) => s + o.total, 0);
-    const cashRevenue = completed.filter((o) => o.payment_method === "cash").reduce((s, o) => s + o.total, 0);
-    const gcashRevenue = completed.filter((o) => o.payment_method === "gcash").reduce((s, o) => s + o.total, 0);
-    const utangRevenue = completed.filter((o) => o.payment_method === "utang").reduce((s, o) => s + o.total, 0);
-
-    const itemCounts = new Map<string, { qty: number; revenue: number }>();
-    for (const order of completed) {
-      for (const oi of order.order_items ?? []) {
-        const existing = itemCounts.get(oi.item_name) ?? { qty: 0, revenue: 0 };
-        itemCounts.set(oi.item_name, {
-          qty: existing.qty + oi.quantity,
-          revenue: existing.revenue + oi.item_price * oi.quantity,
-        });
-      }
-    }
-    const topItems = Array.from(itemCounts.entries())
-      .map(([name, { qty, revenue }]) => ({ name, qty, revenue }))
-      .sort((a, b) => b.qty - a.qty);
-
-    return {
-      completedCount: completed.length,
-      cancelledCount: cancelled.length,
-      totalRevenue,
-      cashRevenue,
-      gcashRevenue,
-      utangRevenue,
-      topItems,
-    };
-  }, [completedOrders]);
+  const updateMenuItem = async (id: string, updates: Partial<MenuItem>) => {
+    await supabase.from("menu_items").update(updates).eq("id", id);
+    setMenuItems((prev) => prev.map((m) => m.id === id ? { ...m, ...updates } : m));
+  };
 
   const pendingCount = confirmOrders.length;
 
@@ -457,7 +387,7 @@ export default function OrdersPage() {
             {/* Menu grid */}
             <div className="flex-1 overflow-y-auto p-3">
               <div className="grid grid-cols-3 gap-2">
-                {menuItems.map((item) => {
+                {menuItems.filter((m) => m.is_available).map((item) => {
                   const inCart = posCart.get(item.id);
                   return (
                     <button
@@ -533,161 +463,30 @@ export default function OrdersPage() {
             )}
           </div>
         ) : (
-          /* Sales Tab */
+          /* Menu Tab */
           <div className="flex-1 overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
-              <h1 className="text-lg font-extrabold">Sales</h1>
-              <select
-                value={selectedSalesDate}
-                onChange={(e) => setSelectedSalesDate(e.target.value)}
-                className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 font-semibold"
+              <h1 className="text-lg font-extrabold">Menu</h1>
+              <a
+                href="/dashboard"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
               >
-                {salesDates.map((d) => (
-                  <option key={d} value={d}>
-                    {new Date(d + "T00:00:00").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
-                  </option>
+                Dashboard
+              </a>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="divide-y divide-slate-700/50">
+                {menuItems.map((item) => (
+                  <MenuItemRow key={item.id} item={item} onUpdate={updateMenuItem} />
                 ))}
-              </select>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* Revenue cards */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-                  <span className="text-xs text-slate-400 block mb-1">Total</span>
-                  <span className="text-xl font-extrabold text-white">{formatCurrency(salesSummary.totalRevenue)}</span>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-                  <span className="text-xs text-emerald-400 block mb-1">Cash</span>
-                  <span className="text-xl font-extrabold text-emerald-300">{formatCurrency(salesSummary.cashRevenue)}</span>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-                  <span className="text-xs text-blue-400 block mb-1">GCash</span>
-                  <span className="text-xl font-extrabold text-blue-300">{formatCurrency(salesSummary.gcashRevenue)}</span>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-                  <span className="text-xs text-orange-400 block mb-1">Utang</span>
-                  <span className="text-xl font-extrabold text-orange-300">{formatCurrency(salesSummary.utangRevenue)}</span>
-                </div>
               </div>
-
-              {/* Order counts */}
-              <div className="flex gap-3">
-                <div className="flex-1 bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center gap-3">
-                  <span className="text-2xl font-extrabold text-white">{salesSummary.completedCount}</span>
-                  <span className="text-sm text-slate-400">Completed</span>
-                </div>
-                {salesSummary.cancelledCount > 0 && (
-                  <div className="bg-slate-800 rounded-xl p-3 border border-slate-700 flex items-center gap-3">
-                    <span className="text-2xl font-extrabold text-red-400">{salesSummary.cancelledCount}</span>
-                    <span className="text-sm text-slate-400">Cancelled</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Item breakdown */}
-              {salesSummary.topItems.length > 0 && (
-                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                  <div className="px-3 py-2 border-b border-slate-700">
-                    <span className="text-xs font-bold text-slate-400">Items Sold</span>
-                  </div>
-                  <div className="divide-y divide-slate-700/50">
-                    {salesSummary.topItems.map(({ name, qty, revenue }) => (
-                      <div key={name} className="px-3 py-2 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-slate-200 min-w-6 text-right">{qty}x</span>
-                          <span className="text-sm text-slate-300">{name}</span>
-                        </div>
-                        <span className="text-sm font-semibold text-slate-400">{formatCurrency(revenue)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Individual orders */}
-              {completedOrders.length > 0 && (
-                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                  <div className="px-3 py-2 border-b border-slate-700">
-                    <span className="text-xs font-bold text-slate-400">Order History</span>
-                  </div>
-                  <div className="divide-y divide-slate-700/50">
-                    {completedOrders.map((order) => (
-                      <SwipeDeleteRow
-                        key={order.id}
-                        onDelete={() => setDeleteOrderId(order.id)}
-                        isUtang={order.payment_method === "utang"}
-                        onMarkPaid={() => handleMarkUtangPaid(order.id)}
-                      >
-                        <div className="px-3 py-2.5">
-                          <div className="flex items-center justify-between mb-1">
-                            <div className="flex items-center gap-2">
-                              {order.chip_number && (
-                                <span className="text-sm font-extrabold text-slate-200">#{order.chip_number}</span>
-                              )}
-                              <span className={`text-xs font-semibold ${
-                                order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-400"
-                              }`}>
-                                {order.payment_method === "gcash" ? "GCash" : order.payment_method === "utang" ? "Utang" : "Cash"}
-                              </span>
-                              {order.status === "cancelled" && (
-                                <span className="text-xs font-semibold text-red-400">Cancelled</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={`text-sm font-bold ${order.status === "cancelled" ? "text-red-400 line-through" : "text-slate-200"}`}>
-                                {formatCurrency(order.total)}
-                              </span>
-                              <span className="text-xs text-slate-600">
-                                {new Date(order.created_at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                            {(order.order_items ?? []).map((oi) => (
-                              <span key={oi.id} className="text-xs text-slate-400">
-                                {oi.quantity > 1 && <span className="text-slate-500">{oi.quantity}x </span>}
-                                {oi.item_name}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </SwipeDeleteRow>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {completedOrders.length === 0 && (
+              {menuItems.length === 0 && (
                 <div className="flex items-center justify-center h-32 text-slate-600 text-sm">
-                  No sales yet today
+                  No menu items
                 </div>
               )}
             </div>
-
-            {/* Delete confirmation modal */}
-            {deleteOrderId && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setDeleteOrderId(null)}>
-                <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 mx-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-                  <h2 className="text-lg font-bold text-white mb-2">Delete Order?</h2>
-                  <p className="text-sm text-slate-400 mb-5">This will permanently remove this order from history.</p>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setDeleteOrderId(null)}
-                      className="flex-1 py-2.5 rounded-xl text-sm font-bold text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleDeleteOrder}
-                      className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-600 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -722,15 +521,15 @@ export default function OrdersPage() {
           <span className="text-xs font-bold">POS</span>
         </button>
         <button
-          onClick={() => setTab("sales")}
+          onClick={() => setTab("menu")}
           className={`flex-1 py-3 flex flex-col items-center gap-1 transition-colors ${
-            tab === "sales" ? "text-white" : "text-slate-500"
+            tab === "menu" ? "text-white" : "text-slate-500"
           }`}
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
           </svg>
-          <span className="text-xs font-bold">Sales</span>
+          <span className="text-xs font-bold">Menu</span>
         </button>
       </div>
 
@@ -942,20 +741,35 @@ function QueueCard({
       </div>
 
       <div className="mt-2 space-y-1">
-        {(order.order_items ?? []).map((oi) => (
-          <div key={oi.id} className="flex items-start justify-between gap-1.5">
-            <div className="flex items-start gap-1.5">
-              <span className="text-slate-600 text-lg leading-tight">•</span>
-              <span className={`text-base font-semibold leading-tight ${isPending ? "text-slate-100" : "text-slate-300"}`}>
-                {oi.quantity > 1 && <span className="text-slate-400 mr-1">{oi.quantity}x</span>}
-                {oi.item_name}
+        {(order.order_items ?? []).map((oi) => {
+          const isIced = /^iced /i.test(oi.item_name);
+          const isHot = /^hot /i.test(oi.item_name);
+          return (
+            <div key={oi.id} className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center gap-1.5">
+                {oi.quantity > 1 && <span className="text-slate-400 text-base font-semibold">{oi.quantity}x</span>}
+                {isIced && (
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
+                    <Snowflake size={14} weight="fill" />
+                    <span className="text-[10px] font-extrabold uppercase tracking-wide">Ice</span>
+                  </span>
+                )}
+                {isHot && (
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">
+                    <Fire size={14} weight="fill" />
+                    <span className="text-[10px] font-extrabold uppercase tracking-wide">Hot</span>
+                  </span>
+                )}
+                <span className={`text-base font-semibold leading-tight ${isPending ? "text-slate-100" : "text-slate-300"}`}>
+                  {oi.item_name.replace(/^(Iced|Hot)\s+/i, "")}
+                </span>
+              </div>
+              <span className="text-xs text-slate-500 shrink-0">
+                {formatCurrency(oi.item_price * oi.quantity)}
               </span>
             </div>
-            <span className="text-xs text-slate-500 shrink-0 mt-0.5">
-              {formatCurrency(oi.item_price * oi.quantity)}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="mt-1.5 pt-1.5 border-t border-slate-700/50 flex justify-between">
         <span className="text-xs font-bold text-slate-400">Total</span>
@@ -982,72 +796,59 @@ function QueueCard({
   );
 }
 
-function SwipeDeleteRow({ onDelete, isUtang, onMarkPaid, children }: { onDelete: () => void; isUtang?: boolean; onMarkPaid?: () => void; children: React.ReactNode }) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  const startX = useRef(0);
-  const currentX = useRef(0);
-  const swiping = useRef(false);
-  const threshold = isUtang ? 160 : 80;
+function MenuItemRow({ item, onUpdate }: { item: MenuItem; onUpdate: (id: string, updates: Partial<MenuItem>) => void }) {
+  const [price, setPrice] = useState(String(item.price));
+  const [cost, setCost] = useState(String(item.cost));
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    startX.current = e.touches[0].clientX;
-    currentX.current = 0;
-    swiping.current = true;
+  const savePrice = () => {
+    const val = parseFloat(price);
+    if (!isNaN(val) && val !== item.price) onUpdate(item.id, { price: val });
+    else setPrice(String(item.price));
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!swiping.current || !rowRef.current) return;
-    const diff = e.touches[0].clientX - startX.current;
-    currentX.current = Math.min(0, diff);
-    rowRef.current.style.transform = `translateX(${currentX.current}px)`;
-    rowRef.current.style.transition = "none";
-  };
-
-  const handleTouchEnd = () => {
-    if (!swiping.current || !rowRef.current) return;
-    swiping.current = false;
-    rowRef.current.style.transition = "transform 0.2s ease-out";
-    if (currentX.current < -threshold) {
-      rowRef.current.style.transform = `translateX(-${threshold}px)`;
-    } else {
-      rowRef.current.style.transform = "translateX(0)";
-    }
-  };
-
-  const resetSwipe = () => {
-    if (rowRef.current) {
-      rowRef.current.style.transition = "transform 0.2s ease-out";
-      rowRef.current.style.transform = "translateX(0)";
-    }
+  const saveCost = () => {
+    const val = parseFloat(cost);
+    if (!isNaN(val) && val !== item.cost) onUpdate(item.id, { cost: val });
+    else setCost(String(item.cost));
   };
 
   return (
-    <div className="relative overflow-hidden">
-      <div className={`absolute inset-y-0 right-0 flex ${isUtang ? "w-40" : "w-20"}`}>
-        {isUtang && (
-          <button
-            onClick={() => { resetSwipe(); onMarkPaid?.(); }}
-            className="w-20 bg-emerald-500 text-white text-xs font-bold flex items-center justify-center"
-          >
-            Paid
-          </button>
-        )}
-        <button
-          onClick={() => { resetSwipe(); onDelete(); }}
-          className="w-20 bg-red-500 text-white text-xs font-bold flex items-center justify-center"
-        >
-          Delete
-        </button>
+    <div className={`px-4 py-3 flex items-center gap-3 ${!item.is_available ? "opacity-40" : ""}`}>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-bold text-slate-200 truncate">{item.name}</div>
+        <div className="flex items-center gap-3 mt-1.5">
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-slate-500">Price</span>
+            <input
+              type="number"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              onBlur={savePrice}
+              className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white font-semibold text-right"
+            />
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-slate-500">Cost</span>
+            <input
+              type="number"
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+              onBlur={saveCost}
+              className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-slate-400 font-semibold text-right"
+            />
+          </div>
+        </div>
       </div>
-      <div
-        ref={rowRef}
-        className="relative bg-slate-800 z-10"
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
+      <button
+        onClick={() => onUpdate(item.id, { is_available: !item.is_available })}
+        className={`w-14 h-8 rounded-full relative transition-colors ${
+          item.is_available ? "bg-emerald-500" : "bg-slate-600"
+        }`}
       >
-        {children}
-      </div>
+        <span className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
+          item.is_available ? "right-1" : "left-1"
+        }`} />
+      </button>
     </div>
   );
 }

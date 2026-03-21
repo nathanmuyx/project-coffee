@@ -7,11 +7,10 @@ import { formatCurrency } from "@/lib/utils";
 import { buildDisplayMenu } from "@/lib/menu-config";
 import { MenuGrid } from "@/components/menu-grid";
 import { getKioskChannel } from "@/lib/kiosk-channel";
+import { Money, DeviceMobile, Trash, Minus, Plus } from "@phosphor-icons/react";
 
 type FlowState =
   | "browsing"
-  | "reviewing"
-  | "payment"
   | "waiting_cash"
   | "gcash_qr"
   | "success";
@@ -148,7 +147,7 @@ export default function KioskPage() {
   const clearCart = useCallback(() => setCart([]), []);
 
   const total = cart.reduce((s, i) => s + i.menuItem.price * i.quantity, 0);
-  const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
+  const totalCost = cart.reduce((s, i) => s + i.menuItem.cost * i.quantity, 0);
 
   const itemImageMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -159,19 +158,19 @@ export default function KioskPage() {
     }
     return map;
   }, [displayMenu]);
+  const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
 
-  const submitOrder = async (method?: PaymentMethod): Promise<string | null> => {
-    const pm = method ?? paymentMethod;
+  const submitOrder = async (method: PaymentMethod, chip: number): Promise<string | null> => {
     setSubmitting(true);
     try {
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .insert({
           total,
-          total_cost: 0,
+          total_cost: totalCost,
           status: "pending",
-          chip_number: chipNumber,
-          payment_method: pm,
+          chip_number: chip,
+          payment_method: method,
         })
         .select("id")
         .single();
@@ -183,7 +182,7 @@ export default function KioskPage() {
         menu_item_id: c.menuItem.id,
         item_name: c.menuItem.name,
         item_price: c.menuItem.price,
-        item_cost: 0,
+        item_cost: c.menuItem.cost,
         quantity: c.quantity,
       }));
 
@@ -209,12 +208,17 @@ export default function KioskPage() {
       await supabase.from("orders").delete().eq("id", pendingOrderId);
       setPendingOrderId(null);
     }
-    setFlowState("payment");
+    setFlowState("browsing");
   };
 
-  const goToPayment = async () => {
-    await assignNextNumber();
-    setFlowState("payment");
+  const handlePay = async (method: PaymentMethod) => {
+    setPaymentMethod(method);
+    const num = await assignNextNumber();
+    const orderId = await submitOrder(method, num);
+    if (orderId) {
+      setPendingOrderId(orderId);
+      setFlowState(method === "gcash" ? "gcash_qr" : "waiting_cash");
+    }
   };
 
   // GCash QR override from /orders
@@ -327,152 +331,11 @@ export default function KioskPage() {
     );
   }
 
-  // Payment method selection
-  if (flowState === "payment") {
-    return (
-      <div className="flex flex-col items-center justify-center h-dvh overflow-hidden bg-white p-8">
-        <button
-          onClick={() => setFlowState("reviewing")}
-          className="self-start mb-6 text-gray-400 hover:text-black transition-colors flex items-center gap-2 text-lg"
-        >
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back
-        </button>
-
-        <div className="text-6xl font-extrabold text-black mb-4">{formatCurrency(total)}</div>
-
-        <h2 className="text-2xl font-bold text-gray-500 mb-8">How would you like to pay?</h2>
-
-        <div className="flex gap-4 w-full max-w-md">
-          <button
-            onClick={async () => {
-              setPaymentMethod("cash");
-              const orderId = await submitOrder("cash");
-              if (orderId) {
-                setPendingOrderId(orderId);
-                setFlowState("waiting_cash");
-              }
-            }}
-            disabled={submitting}
-            className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95 disabled:opacity-50"
-          >
-            <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
-              <svg className="w-10 h-10 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
-              </svg>
-            </div>
-            <span className="text-2xl font-bold text-black">Cash</span>
-            <span className="text-base text-gray-500">Pay at the counter</span>
-          </button>
-
-          <button
-            onClick={async () => {
-              setPaymentMethod("gcash");
-              const orderId = await submitOrder("gcash");
-              if (orderId) {
-                setPendingOrderId(orderId);
-                setFlowState("gcash_qr");
-              }
-            }}
-            disabled={submitting}
-            className="flex-1 flex flex-col items-center gap-4 p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-black transition-all active:scale-95 disabled:opacity-50"
-          >
-            <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
-              <svg className="w-10 h-10 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
-              </svg>
-            </div>
-            <span className="text-2xl font-bold text-black">GCash</span>
-            <span className="text-base text-gray-500">Scan QR to pay</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Reviewing cart
-  if (flowState === "reviewing") {
-    return (
-      <div className="flex flex-col h-dvh overflow-hidden bg-white p-6">
-        <h2 className="text-3xl font-bold text-black mb-4 shrink-0">Review Your Order</h2>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
-          {cart.map((item) => (
-            <div
-              key={item.menuItem.id}
-              className="flex items-center gap-4 bg-gray-50 rounded-2xl p-4 border border-gray-200"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={itemImageMap.get(item.menuItem.id) ?? ""}
-                alt={item.menuItem.name}
-                className="w-24 h-24 rounded-xl object-cover shrink-0 bg-gray-200"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-xl text-black leading-tight">{item.menuItem.name}</div>
-                <div className="text-2xl font-extrabold text-black mt-1">
-                  {formatCurrency(item.menuItem.price * item.quantity)}
-                </div>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <button
-                  onClick={() => updateQuantity(item.menuItem.id, -1)}
-                  className="w-14 h-14 rounded-xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-3xl font-bold text-black active:scale-95 transition-transform"
-                >
-                  -
-                </button>
-                <span className="w-8 text-center text-2xl font-extrabold text-black">
-                  {item.quantity}
-                </span>
-                <button
-                  onClick={() => updateQuantity(item.menuItem.id, 1)}
-                  className="w-14 h-14 rounded-xl bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-3xl font-bold text-black active:scale-95 transition-transform"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="shrink-0 border-t border-gray-200 pt-5 mt-4">
-          <div className="flex justify-between items-end mb-5">
-            <div>
-              <span className="text-sm text-gray-400 uppercase tracking-wide">Total</span>
-              <div className="text-lg text-gray-500">
-                {totalItems} item{totalItems !== 1 ? "s" : ""}
-              </div>
-            </div>
-            <span className="text-5xl font-extrabold text-black">{formatCurrency(total)}</span>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setFlowState("browsing")}
-              className="flex-1 py-6 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-2xl transition-colors"
-            >
-              Order More
-            </button>
-            <button
-              onClick={goToPayment}
-              disabled={cart.length === 0}
-              className="flex-[2] py-6 rounded-2xl bg-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-3xl transition-colors"
-            >
-              Checkout
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Browsing (default)
+  // Browsing (default) — menu + cart panel with payment buttons
   return (
     <div className="flex flex-col h-dvh overflow-hidden bg-white">
-      <div className="p-4 pb-0">
-        <p className="text-gray-500 text-lg">Tap items to add to your order</p>
+      <div className="px-6 pt-6 pb-2 shrink-0">
+        <h1 className="text-4xl font-extrabold text-black tracking-tight">TAP TO ORDER</h1>
       </div>
       <div className="flex-1 min-h-0">
         <MenuGrid
@@ -481,33 +344,73 @@ export default function KioskPage() {
           onAddItem={addItem}
         />
       </div>
-      <div className="shrink-0 border-t border-gray-200 bg-white px-6 py-5 flex items-center justify-between">
-        <div>
-          <span className="text-2xl text-gray-500">
-            {totalItems > 0 ? `${totalItems} item${totalItems !== 1 ? "s" : ""}` : "No items"}
-          </span>
-          <span className="text-4xl font-extrabold text-black ml-4">
-            {formatCurrency(total)}
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          {cart.length > 0 && (
+
+      {/* Cart panel — appears when items are in cart */}
+      {cart.length > 0 && (
+        <div className="shrink-0 border-t-2 border-gray-100 bg-gray-50 px-5 pt-4 pb-5">
+          {/* Cart items */}
+          <div className="space-y-2 mb-4">
+            {cart.map((c) => (
+              <div key={c.menuItem.id} className="flex items-center gap-3 bg-white rounded-2xl p-3 border border-gray-200">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={itemImageMap.get(c.menuItem.id) ?? ""}
+                  alt={c.menuItem.name}
+                  className="w-16 h-16 rounded-xl object-cover shrink-0 bg-gray-200"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-xl text-black leading-tight truncate">{c.menuItem.name}</div>
+                  <div className="text-lg text-gray-500 font-semibold">{formatCurrency(c.menuItem.price * c.quantity)}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => updateQuantity(c.menuItem.id, -1)}
+                    className="w-14 h-14 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-colors active:scale-95"
+                  >
+                    <Minus size={22} weight="bold" />
+                  </button>
+                  <span className="w-10 text-center text-2xl font-extrabold text-black">{c.quantity}</span>
+                  <button
+                    onClick={() => updateQuantity(c.menuItem.id, 1)}
+                    className="w-14 h-14 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-colors active:scale-95"
+                  >
+                    <Plus size={22} weight="bold" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Payment row */}
+          <div className="flex items-stretch gap-3">
             <button
               onClick={clearCart}
-              className="px-6 py-5 rounded-2xl text-gray-400 hover:text-red-500 font-bold text-2xl transition-colors"
+              className="w-16 rounded-2xl bg-gray-200 hover:bg-gray-300 text-gray-500 flex items-center justify-center transition-colors active:scale-95"
             >
-              Clear
+              <Trash size={26} weight="bold" />
             </button>
-          )}
-          <button
-            onClick={() => setFlowState("reviewing")}
-            disabled={cart.length === 0}
-            className="px-12 py-5 rounded-2xl bg-black hover:bg-gray-800 disabled:bg-gray-300 disabled:text-gray-500 text-white font-bold text-3xl transition-colors active:scale-[0.98]"
-          >
-            Checkout
-          </button>
+            <button
+              onClick={() => handlePay("cash")}
+              disabled={submitting}
+              className="flex-1 flex items-center justify-center gap-4 py-7 rounded-2xl bg-black hover:bg-gray-800 text-white font-bold text-4xl transition-colors active:scale-[0.97] disabled:opacity-50"
+            >
+              <Money size={44} weight="bold" />
+              <span>Cash</span>
+              <span className="opacity-60 ml-1">{formatCurrency(total)}</span>
+            </button>
+            <button
+              onClick={() => handlePay("gcash")}
+              disabled={submitting}
+              className="flex-1 flex items-center justify-center gap-4 py-7 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-4xl transition-colors active:scale-[0.97] disabled:opacity-50"
+            >
+              <DeviceMobile size={44} weight="bold" />
+              <span>GCash</span>
+              <span className="opacity-60 ml-1">{formatCurrency(total)}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

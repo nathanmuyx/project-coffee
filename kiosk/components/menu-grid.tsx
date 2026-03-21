@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { MenuItem, CartItem } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import { DisplayDrink } from "@/lib/menu-config";
+import { Snowflake, Fire } from "@phosphor-icons/react";
 
 interface MenuGridProps {
   drinks: DisplayDrink[];
@@ -12,11 +13,8 @@ interface MenuGridProps {
 }
 
 export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
-  const [selecting, setSelecting] = useState<DisplayDrink | null>(null);
-  const [selectedVariant, setSelectedVariant] = useState(0);
-  const [quantity, setQuantity] = useState(1);
+  const [variantPicker, setVariantPicker] = useState<DisplayDrink | null>(null);
 
-  // Map menu item id -> qty in cart for badge display
   const cartQtyMap = useMemo(() => {
     const map = new Map<string, number>();
     for (const c of cart) {
@@ -25,16 +23,17 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
     return map;
   }, [cart]);
 
-  const openModal = (drink: DisplayDrink) => {
-    setSelecting(drink);
-    setSelectedVariant(0);
-    setQuantity(1);
+  const handleTap = (drink: DisplayDrink) => {
+    if (drink.variants.length === 1) {
+      onAddItem(drink.variants[0].menuItem, 1);
+    } else {
+      setVariantPicker(drink);
+    }
   };
 
-  const handleAdd = () => {
-    if (!selecting) return;
-    onAddItem(selecting.variants[selectedVariant].menuItem, quantity);
-    setSelecting(null);
+  const handleVariantPick = (variant: { label: string; menuItem: MenuItem }) => {
+    onAddItem(variant.menuItem, 1);
+    setVariantPicker(null);
   };
 
   return (
@@ -49,8 +48,8 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
             return (
               <button
                 key={drink.name}
-                onClick={() => openModal(drink)}
-                className="relative flex flex-col rounded-2xl bg-white border border-gray-200 overflow-hidden transition-all active:scale-95 text-left shadow-sm"
+                onClick={() => handleTap(drink)}
+                className="relative flex flex-col rounded-2xl bg-white border border-gray-200 overflow-hidden transition-all active:scale-[0.97] text-left shadow-sm"
               >
                 {badgeQty > 0 && (
                   <span className="absolute top-2 right-2 z-10 min-w-10 h-10 flex items-center justify-center rounded-full bg-black text-white text-xl font-bold px-2">
@@ -77,7 +76,7 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
                       {formatCurrency(drink.price)}
                     </span>
                     {drink.variants.length > 1 && (
-                      <span className="text-sm text-gray-500 font-medium">Hot / Iced</span>
+                      <span className="text-base font-bold text-gray-400">Hot / Iced</span>
                     )}
                   </div>
                 </div>
@@ -92,85 +91,39 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
         )}
       </div>
 
-      {/* Item modal */}
-      {selecting && (
+      {/* Hot / Iced variant picker */}
+      {variantPicker && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => setSelecting(null)}
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={() => setVariantPicker(null)}
         >
           <div
-            className="bg-white w-full max-w-md rounded-3xl overflow-hidden"
+            className="bg-white w-full max-w-md rounded-3xl p-8"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Image */}
-            <div className="w-full aspect-[3/2] bg-gray-100 relative overflow-hidden">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={selecting.image}
-                alt={selecting.name}
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            </div>
-
-            <div className="p-8">
-              <h3 className="text-3xl font-bold text-black text-center mb-1">
-                {selecting.name}
-              </h3>
-              <p className="text-2xl text-gray-500 text-center mb-6">
-                {formatCurrency(selecting.variants[selectedVariant].menuItem.price)}
-              </p>
-
-              {/* Hot / Iced radio */}
-              {selecting.variants.length > 1 && (
-                <div className="flex gap-3 mb-6">
-                  {selecting.variants.map((v, i) => (
-                    <button
-                      key={v.label}
-                      onClick={() => setSelectedVariant(i)}
-                      className={`flex-1 py-5 rounded-xl text-center transition-colors border-2 ${
-                        selectedVariant === i
-                          ? "bg-gray-100 border-black"
-                          : "bg-white border-gray-200"
-                      }`}
-                    >
-                      <span className={`text-2xl font-bold ${selectedVariant === i ? "text-black" : "text-gray-400"}`}>{v.label}</span>
-                      <span className={`block text-lg mt-0.5 ${selectedVariant === i ? "text-gray-600" : "text-gray-300"}`}>
-                        {formatCurrency(v.menuItem.price)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Quantity */}
-              <div className="flex items-center justify-center gap-6 mb-8">
-                <button
-                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="w-16 h-16 rounded-2xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-4xl font-bold text-black transition-colors active:scale-95"
-                >
-                  -
-                </button>
-                <span className="text-5xl font-extrabold text-black w-14 text-center">
-                  {quantity}
-                </span>
-                <button
-                  onClick={() => setQuantity((q) => q + 1)}
-                  className="w-16 h-16 rounded-2xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-4xl font-bold text-black transition-colors active:scale-95"
-                >
-                  +
-                </button>
-              </div>
-
-              {/* Add to cart */}
-              <button
-                onClick={handleAdd}
-                className="w-full py-5 rounded-xl bg-black hover:bg-gray-800 text-white font-bold text-2xl transition-colors active:scale-[0.98]"
-              >
-                Add to Cart — {formatCurrency(selecting.variants[selectedVariant].menuItem.price * quantity)}
-              </button>
+            <h3 className="text-3xl font-bold text-black text-center mb-6">
+              {variantPicker.name}
+            </h3>
+            <div className="flex gap-4">
+              {variantPicker.variants.map((v) => {
+                const isHot = /hot/i.test(v.label);
+                return (
+                  <button
+                    key={v.label}
+                    onClick={() => handleVariantPick(v)}
+                    className="flex-1 flex flex-col items-center gap-3 py-10 rounded-2xl bg-gray-100 hover:bg-gray-200 border-2 border-gray-200 text-center transition-colors active:scale-95"
+                  >
+                    {isHot
+                      ? <Fire size={52} weight="fill" className="text-red-500" />
+                      : <Snowflake size={52} weight="fill" className="text-blue-500" />
+                    }
+                    <span className="text-4xl font-extrabold text-black">{v.label}</span>
+                    <span className="text-2xl text-gray-500 font-semibold">
+                      {formatCurrency(v.menuItem.price)}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
