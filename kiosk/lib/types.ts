@@ -36,3 +36,46 @@ export interface OrderItem {
   item_cost: number;
   quantity: number;
 }
+
+export interface Ingredient {
+  id: string;
+  name: string;
+  unit: string;
+  current_stock: number;
+  cost_per_unit: number;
+  group_id: string | null;
+}
+
+export interface Purchase {
+  id: string;
+  ingredient_id: string;
+  item_name: string;
+  total_cost: number;
+  quantity: number;
+  content_quantity: number;
+  content_unit: string;
+  purchased_at: string;
+}
+
+export interface MenuItemIngredient {
+  id: string;
+  menu_item_id: string;
+  ingredient_id: string;
+  quantity: number;
+  ingredient?: Ingredient;
+}
+
+export interface StockLog {
+  id: string;
+  ingredient_id: string;
+  type: "purchase" | "sale" | "adjustment";
+  quantity: number;
+  reference_id: string | null;
+  created_at: string;
+}
+
+export interface InventoryGroup {
+  id: string;
+  name: string;
+  sort_order: number;
+}

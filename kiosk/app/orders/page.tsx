@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Order, MenuItem } from "@/lib/types";
+import { Order, MenuItem, Ingredient, MenuItemIngredient } from "@/lib/types";
 import { formatCurrency, getShortName } from "@/lib/utils";
 import { sendShowGcash, sendHideGcash } from "@/lib/kiosk-channel";
+import { deductStockForOrder } from "@/lib/stock";
+import CostsTab from "@/components/costs-tab";
 import { Snowflake, Fire } from "@phosphor-icons/react";
 
 const POLL_INTERVAL = 3000;
@@ -32,13 +34,34 @@ function classifyItem(name: string): { espresso: boolean; matcha: boolean } {
 }
 
 export default function OrdersPage() {
-  const [tab, setTab] = useState<"orders" | "pos" | "menu">("orders");
+  const [tab, setTab] = useState<"orders" | "pos" | "dashboard" | "costs">("orders");
   const [orders, setOrders] = useState<Order[]>([]);
   const prevOrderIdsRef = useRef<Set<string>>(new Set());
   const [gcashShowing, setGcashShowing] = useState(false);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
   const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
+  const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
+  const [showMenu, setShowMenu] = useState(false);
+
+  const fetchCompletedOrders = useCallback(async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data } = await supabase
+      .from("orders")
+      .select("*, order_items(*)")
+      .in("status", ["completed", "cancelled"])
+      .gte("created_at", today.toISOString())
+      .order("created_at", { ascending: false });
+    if (data) setCompletedOrders(data);
+  }, []);
+
+  useEffect(() => {
+    fetchCompletedOrders();
+    const interval = setInterval(fetchCompletedOrders, POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchCompletedOrders]);
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -84,9 +107,18 @@ export default function OrdersPage() {
     if (data) setMenuItems(data);
   }, []);
 
+  const fetchIngredients = useCallback(async () => {
+    const { data } = await supabase
+      .from("ingredients")
+      .select("*")
+      .order("name");
+    if (data) setIngredients(data);
+  }, []);
+
   useEffect(() => {
     fetchMenuItems();
-  }, [fetchMenuItems]);
+    fetchIngredients();
+  }, [fetchMenuItems, fetchIngredients]);
 
 
   const { espressoCount, matchaCount } = useMemo(() => {
@@ -127,9 +159,24 @@ export default function OrdersPage() {
       .update({ status: "completed" })
       .eq("id", orderId);
     if (error) fetchOrders();
+    fetchCompletedOrders();
+  };
+
+  const handleMarkUtangPaid = async (orderId: string) => {
+    setCompletedOrders((prev) =>
+      prev.map((o) => o.id === orderId ? { ...o, payment_method: "cash" as const } : o)
+    );
+    await supabase.from("orders").update({ payment_method: "cash" }).eq("id", orderId);
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    setCompletedOrders((prev) => prev.filter((o) => o.id !== orderId));
+    await supabase.from("order_items").delete().eq("order_id", orderId);
+    await supabase.from("orders").delete().eq("id", orderId);
   };
 
   const handleAcceptPayment = async (orderId: string) => {
+    const order = orders.find((o) => o.id === orderId);
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId ? { ...o, status: "preparing" } : o
@@ -140,6 +187,10 @@ export default function OrdersPage() {
       .update({ status: "preparing" })
       .eq("id", orderId);
     if (error) fetchOrders();
+    // Fire-and-forget stock deduction
+    if (order?.order_items) {
+      deductStockForOrder(orderId, order.order_items);
+    }
   };
 
   const handleCancel = async (orderId: string) => {
@@ -149,6 +200,7 @@ export default function OrdersPage() {
       .update({ status: "cancelled" })
       .eq("id", orderId);
     if (error) fetchOrders();
+    fetchCompletedOrders();
   };
 
   const toggleGcash = () => {
@@ -228,9 +280,13 @@ export default function OrdersPage() {
       item_cost: item.cost,
       quantity: qty,
     }));
-    await supabase.from("order_items").insert(items);
+    const { data: insertedItems } = await supabase.from("order_items").insert(items).select();
     setPosCart(new Map());
     fetchOrders();
+    // Fire-and-forget stock deduction
+    if (insertedItems) {
+      deductStockForOrder(order.id, insertedItems);
+    }
   };
 
   const confirmOrders = orders.filter((o) => o.status === "pending");
@@ -245,6 +301,17 @@ export default function OrdersPage() {
     }
     return Array.from(counts.entries()).map(([name, qty]) => ({ name, qty }));
   }, [makeOrders]);
+
+  const dashStats = useMemo(() => {
+    const completed = completedOrders.filter((o) => o.status === "completed");
+    const revenue = completed.reduce((s, o) => s + o.total, 0);
+    const cash = completed.filter((o) => o.payment_method === "cash").reduce((s, o) => s + o.total, 0);
+    const gcash = completed.filter((o) => o.payment_method === "gcash").reduce((s, o) => s + o.total, 0);
+    const utang = completed.filter((o) => o.payment_method === "utang").reduce((s, o) => s + o.total, 0);
+    const totalCost = completed.reduce((s, o) => s + o.total_cost, 0);
+    const cups = completed.reduce((s, o) => s + (o.order_items?.reduce((t, i) => t + i.quantity, 0) ?? 0), 0);
+    return { revenue, cash, gcash, utang, totalCost, profit: revenue - totalCost, cups, count: completed.length };
+  }, [completedOrders]);
 
   const updateMenuItem = async (id: string, updates: Partial<MenuItem>) => {
     await supabase.from("menu_items").update(updates).eq("id", id);
@@ -462,32 +529,106 @@ export default function OrdersPage() {
               </div>
             )}
           </div>
-        ) : (
-          /* Menu Tab */
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
-              <h1 className="text-lg font-extrabold">Menu</h1>
-              <a
-                href="/dashboard"
-                className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
-              >
-                Dashboard
-              </a>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              <div className="divide-y divide-slate-700/50">
-                {menuItems.map((item) => (
-                  <MenuItemRow key={item.id} item={item} onUpdate={updateMenuItem} />
-                ))}
+        ) : tab === "dashboard" ? (
+          showMenu ? (
+            /* Menu (Settings) view */
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+                <h1 className="text-lg font-extrabold">Menu</h1>
+                <button
+                  onClick={() => setShowMenu(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
+                >
+                  Back
+                </button>
               </div>
-              {menuItems.length === 0 && (
-                <div className="flex items-center justify-center h-32 text-slate-600 text-sm">
-                  No menu items
+              <div className="flex-1 overflow-y-auto">
+                <div className="divide-y divide-slate-700/50">
+                  {menuItems.map((item) => (
+                    <MenuItemRow key={item.id} item={item} ingredients={ingredients} onUpdate={updateMenuItem} />
+                  ))}
                 </div>
-              )}
+                {menuItems.length === 0 && (
+                  <div className="flex items-center justify-center h-32 text-slate-600 text-sm">
+                    No menu items
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Dashboard view */
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+                <h1 className="text-lg font-extrabold">Today</h1>
+                <button
+                  onClick={() => setShowMenu(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
+                >
+                  Menu
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {/* Stats grid */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-slate-800 rounded-xl p-2.5 border border-slate-700">
+                    <div className="text-[10px] text-slate-400">Revenue</div>
+                    <div className="text-lg font-extrabold text-white">{formatCurrency(dashStats.revenue)}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-2.5 border border-slate-700">
+                    <div className="text-[10px] text-emerald-400">Profit</div>
+                    <div className="text-lg font-extrabold text-emerald-300">{formatCurrency(dashStats.profit)}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-2.5 border border-slate-700">
+                    <div className="text-[10px] text-slate-400">Cups</div>
+                    <div className="text-lg font-extrabold text-white">{dashStats.cups}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-slate-800 rounded-xl p-2 border border-slate-700">
+                    <div className="text-[10px] text-emerald-400">Cash</div>
+                    <div className="text-sm font-bold text-emerald-300">{formatCurrency(dashStats.cash)}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-2 border border-slate-700">
+                    <div className="text-[10px] text-blue-400">GCash</div>
+                    <div className="text-sm font-bold text-blue-300">{formatCurrency(dashStats.gcash)}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-2 border border-slate-700">
+                    <div className="text-[10px] text-orange-400">Utang</div>
+                    <div className="text-sm font-bold text-orange-300">{formatCurrency(dashStats.utang)}</div>
+                  </div>
+                </div>
+
+                {/* Full dashboard link */}
+                <a
+                  href="/dashboard"
+                  className="block text-center py-2 rounded-lg text-xs font-bold text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors"
+                >
+                  Full Dashboard (all dates)
+                </a>
+
+                {/* Completed orders — swipeable */}
+                <div className="text-xs font-bold text-slate-400 pt-1">
+                  Orders ({completedOrders.length})
+                </div>
+                {completedOrders.length === 0 && (
+                  <div className="text-xs text-slate-600 text-center py-4">No completed orders today</div>
+                )}
+                <div className="space-y-1.5">
+                  {completedOrders.map((order) => (
+                    <SwipeableOrderRow
+                      key={order.id}
+                      order={order}
+                      onDelete={handleDeleteOrder}
+                      onMarkPaid={order.payment_method === "utang" ? handleMarkUtangPaid : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+          /* Costs Tab */
+          <CostsTab />
         )}
       </div>
 
@@ -521,15 +662,26 @@ export default function OrdersPage() {
           <span className="text-xs font-bold">POS</span>
         </button>
         <button
-          onClick={() => setTab("menu")}
+          onClick={() => { setTab("dashboard"); setShowMenu(false); }}
           className={`flex-1 py-3 flex flex-col items-center gap-1 transition-colors ${
-            tab === "menu" ? "text-white" : "text-slate-500"
+            tab === "dashboard" ? "text-white" : "text-slate-500"
           }`}
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
           </svg>
-          <span className="text-xs font-bold">Menu</span>
+          <span className="text-xs font-bold">Dashboard</span>
+        </button>
+        <button
+          onClick={() => setTab("costs")}
+          className={`flex-1 py-3 flex flex-col items-center gap-1 transition-colors ${
+            tab === "costs" ? "text-white" : "text-slate-500"
+          }`}
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          <span className="text-xs font-bold">Costs</span>
         </button>
       </div>
 
@@ -796,9 +948,14 @@ function QueueCard({
   );
 }
 
-function MenuItemRow({ item, onUpdate }: { item: MenuItem; onUpdate: (id: string, updates: Partial<MenuItem>) => void }) {
+function MenuItemRow({ item, ingredients, onUpdate }: { item: MenuItem; ingredients: Ingredient[]; onUpdate: (id: string, updates: Partial<MenuItem>) => void }) {
   const [price, setPrice] = useState(String(item.price));
   const [cost, setCost] = useState(String(item.cost));
+  const [expanded, setExpanded] = useState(false);
+  const [recipe, setRecipe] = useState<MenuItemIngredient[]>([]);
+  const [loadedRecipe, setLoadedRecipe] = useState(false);
+  const [addingId, setAddingId] = useState("");
+  const [addingQty, setAddingQty] = useState("");
 
   const savePrice = () => {
     const val = parseFloat(price);
@@ -812,43 +969,271 @@ function MenuItemRow({ item, onUpdate }: { item: MenuItem; onUpdate: (id: string
     else setCost(String(item.cost));
   };
 
+  const loadRecipe = async () => {
+    if (loadedRecipe) return;
+    const { data } = await supabase
+      .from("menu_item_ingredients")
+      .select("*, ingredient:ingredients(*)")
+      .eq("menu_item_id", item.id);
+    if (data) setRecipe(data);
+    setLoadedRecipe(true);
+  };
+
+  const toggleExpand = () => {
+    if (!expanded) loadRecipe();
+    setExpanded(!expanded);
+  };
+
+  const recipeCost = recipe.reduce((sum, r) => {
+    const ing = r.ingredient;
+    return sum + (ing ? ing.cost_per_unit * r.quantity : 0);
+  }, 0);
+
+  const addIngredient = async () => {
+    if (!addingId || !addingQty) return;
+    const qty = parseFloat(addingQty);
+    if (isNaN(qty) || qty <= 0) return;
+    const { data } = await supabase
+      .from("menu_item_ingredients")
+      .insert({ menu_item_id: item.id, ingredient_id: addingId, quantity: qty })
+      .select("*, ingredient:ingredients(*)")
+      .single();
+    if (data) setRecipe((prev) => [...prev, data]);
+    setAddingId("");
+    setAddingQty("");
+  };
+
+  const removeIngredient = async (id: string) => {
+    await supabase.from("menu_item_ingredients").delete().eq("id", id);
+    setRecipe((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const updateRecipeQty = async (id: string, qty: number) => {
+    await supabase.from("menu_item_ingredients").update({ quantity: qty }).eq("id", id);
+    setRecipe((prev) => prev.map((r) => r.id === id ? { ...r, quantity: qty } : r));
+  };
+
+  const syncCost = () => {
+    const rounded = Math.round(recipeCost * 100) / 100;
+    setCost(String(rounded));
+    onUpdate(item.id, { cost: rounded });
+  };
+
   return (
-    <div className={`px-4 py-3 flex items-center gap-3 ${!item.is_available ? "opacity-40" : ""}`}>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-bold text-slate-200 truncate">{item.name}</div>
-        <div className="flex items-center gap-3 mt-1.5">
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-slate-500">Price</span>
-            <input
-              type="number"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              onBlur={savePrice}
-              className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white font-semibold text-right"
-            />
+    <div className={`${!item.is_available ? "opacity-40" : ""}`}>
+      <div className="px-4 py-3 flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <button onClick={toggleExpand} className="text-sm font-bold text-slate-200 truncate text-left block">
+            {item.name}
+          </button>
+          <div className="flex items-center gap-3 mt-1.5">
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-500">Price</span>
+              <input
+                type="number"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                onBlur={savePrice}
+                className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white font-semibold text-right"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-500">Cost</span>
+              <input
+                type="number"
+                value={cost}
+                onChange={(e) => setCost(e.target.value)}
+                onBlur={saveCost}
+                className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-slate-400 font-semibold text-right"
+              />
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-slate-500">Cost</span>
-            <input
-              type="number"
-              value={cost}
-              onChange={(e) => setCost(e.target.value)}
-              onBlur={saveCost}
-              className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-slate-400 font-semibold text-right"
-            />
+        </div>
+        <button
+          onClick={() => onUpdate(item.id, { is_available: !item.is_available })}
+          className={`w-14 h-8 rounded-full relative transition-colors ${
+            item.is_available ? "bg-emerald-500" : "bg-slate-600"
+          }`}
+        >
+          <span className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
+            item.is_available ? "right-1" : "left-1"
+          }`} />
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="px-4 pb-3 space-y-2">
+          <div className="bg-slate-800 rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400">Recipe</span>
+              {recipe.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">
+                    Total: <span className="font-bold text-emerald-400">{formatCurrency(recipeCost)}</span>
+                  </span>
+                  {Math.abs(recipeCost - item.cost) > 0.01 && (
+                    <button
+                      onClick={syncCost}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
+                    >
+                      Sync cost
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {recipe.length === 0 && loadedRecipe && (
+              <div className="text-xs text-slate-600">No ingredients added</div>
+            )}
+
+            {recipe.map((r) => (
+              <div key={r.id} className="flex items-center gap-2 text-sm">
+                <button
+                  onClick={() => removeIngredient(r.id)}
+                  className="w-5 h-5 rounded bg-slate-700 hover:bg-red-500/20 text-slate-500 hover:text-red-400 flex items-center justify-center text-xs transition-colors"
+                >
+                  ×
+                </button>
+                <span className="text-slate-300 flex-1">{r.ingredient?.name ?? "?"}</span>
+                <input
+                  type="number"
+                  defaultValue={r.quantity}
+                  onBlur={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val > 0 && val !== r.quantity) updateRecipeQty(r.id, val);
+                  }}
+                  className="w-16 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-white text-right"
+                />
+                <span className="text-[10px] text-slate-500 w-6">{r.ingredient?.unit}</span>
+                <span className="text-xs text-slate-500 w-14 text-right">
+                  {r.ingredient ? formatCurrency(r.ingredient.cost_per_unit * r.quantity) : "—"}
+                </span>
+              </div>
+            ))}
+
+            {/* Add ingredient */}
+            <div className="flex items-center gap-2 pt-1 border-t border-slate-700/50">
+              <select
+                value={addingId}
+                onChange={(e) => setAddingId(e.target.value)}
+                className="flex-1 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-white"
+              >
+                <option value="">+ Add ingredient</option>
+                {ingredients
+                  .filter((i) => !recipe.some((r) => r.ingredient_id === i.id))
+                  .map((i) => (
+                    <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+                  ))}
+              </select>
+              <input
+                type="number"
+                value={addingQty}
+                onChange={(e) => setAddingQty(e.target.value)}
+                placeholder="qty"
+                className="w-16 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-white text-right"
+              />
+              <button
+                onClick={addIngredient}
+                disabled={!addingId || !addingQty}
+                className="px-2 py-1 rounded text-xs font-bold bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 disabled:opacity-30 transition-colors"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SwipeableOrderRow({
+  order,
+  onDelete,
+  onMarkPaid,
+}: {
+  order: Order;
+  onDelete: (id: string) => void;
+  onMarkPaid?: (id: string) => void;
+}) {
+  const startXRef = useRef(0);
+  const offsetRef = useRef(0);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const isCancelled = order.status === "cancelled";
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    startXRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const dx = e.touches[0].clientX - startXRef.current;
+    offsetRef.current = dx;
+    if (rowRef.current) {
+      rowRef.current.style.transform = `translateX(${dx}px)`;
+      rowRef.current.style.transition = "none";
+    }
+  };
+
+  const handleTouchEnd = () => {
+    const dx = offsetRef.current;
+    if (rowRef.current) {
+      rowRef.current.style.transition = "transform 0.2s ease-out";
+    }
+
+    if (dx < -100) {
+      // Swipe left → delete
+      if (rowRef.current) rowRef.current.style.transform = "translateX(-100%)";
+      setTimeout(() => onDelete(order.id), 200);
+    } else if (dx > 100 && onMarkPaid) {
+      // Swipe right → mark paid (utang only)
+      if (rowRef.current) rowRef.current.style.transform = "translateX(100%)";
+      setTimeout(() => onMarkPaid(order.id), 200);
+    } else {
+      if (rowRef.current) rowRef.current.style.transform = "translateX(0)";
+    }
+    offsetRef.current = 0;
+  };
+
+  const time = new Date(order.created_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" });
+  const itemNames = (order.order_items ?? []).map((oi) => `${oi.quantity > 1 ? oi.quantity + "x " : ""}${oi.item_name}`).join(", ");
+
+  return (
+    <div className="relative overflow-hidden rounded-lg">
+      {/* Background actions */}
+      <div className="absolute inset-0 flex">
+        {onMarkPaid && (
+          <div className="flex-1 bg-emerald-600 flex items-center pl-4">
+            <span className="text-xs font-bold text-white">Paid</span>
+          </div>
+        )}
+        <div className={`flex-1 bg-red-600 flex items-center justify-end pr-4 ${onMarkPaid ? "" : "ml-auto"}`}>
+          <span className="text-xs font-bold text-white">Delete</span>
+        </div>
+      </div>
+      {/* Foreground row */}
+      <div
+        ref={rowRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        className={`relative bg-slate-800 px-3 py-2 ${isCancelled ? "opacity-40" : ""}`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className={`text-xs font-bold ${
+              order.payment_method === "gcash" ? "text-blue-400" : order.payment_method === "utang" ? "text-orange-400" : "text-emerald-400"
+            }`}>
+              {order.payment_method === "gcash" ? "G" : order.payment_method === "utang" ? "U" : "C"}
+            </span>
+            <span className="text-sm text-slate-300 truncate">{itemNames}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-sm font-bold text-slate-200">{formatCurrency(order.total)}</span>
+            <span className="text-[10px] text-slate-500">{time}</span>
           </div>
         </div>
       </div>
-      <button
-        onClick={() => onUpdate(item.id, { is_available: !item.is_available })}
-        className={`w-14 h-8 rounded-full relative transition-colors ${
-          item.is_available ? "bg-emerald-500" : "bg-slate-600"
-        }`}
-      >
-        <span className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
-          item.is_available ? "right-1" : "left-1"
-        }`} />
-      </button>
     </div>
   );
 }
