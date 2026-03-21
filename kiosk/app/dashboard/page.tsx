@@ -197,8 +197,8 @@ export default function DashboardPage() {
           {/* Cost & Profit */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-              <div className="text-xs text-red-400">Cost</div>
-              <div className="text-xl font-extrabold text-red-300">
+              <div className="text-xs text-slate-400">Cost</div>
+              <div className="text-xl font-extrabold text-slate-300">
                 {formatCurrency(stats.totalCost)}
               </div>
             </div>
