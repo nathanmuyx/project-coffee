@@ -44,24 +44,51 @@ export default function OrdersPage() {
   const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
   const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
   const [showMenu, setShowMenu] = useState(false);
+  const [dashDates, setDashDates] = useState<string[]>([]);
+  const [selectedDashDate, setSelectedDashDate] = useState<string>(() =>
+    new Date().toLocaleDateString("en-CA")
+  );
+
+  // Fetch available dates for dashboard
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("orders")
+        .select("created_at")
+        .in("status", ["completed", "cancelled"])
+        .order("created_at", { ascending: false });
+      if (data) {
+        const unique = [...new Set(data.map((o) =>
+          new Date(o.created_at).toLocaleDateString("en-CA")
+        ))];
+        setDashDates(unique);
+      }
+    })();
+  }, []);
 
   const fetchCompletedOrders = useCallback(async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const date = new Date(selectedDashDate);
+    date.setHours(0, 0, 0, 0);
+    const nextDay = new Date(date);
+    nextDay.setDate(nextDay.getDate() + 1);
     const { data } = await supabase
       .from("orders")
       .select("*, order_items(*)")
       .in("status", ["completed", "cancelled"])
-      .gte("created_at", today.toISOString())
+      .gte("created_at", date.toISOString())
+      .lt("created_at", nextDay.toISOString())
       .order("created_at", { ascending: false });
     if (data) setCompletedOrders(data);
-  }, []);
+  }, [selectedDashDate]);
 
   useEffect(() => {
     fetchCompletedOrders();
-    const interval = setInterval(fetchCompletedOrders, POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [fetchCompletedOrders]);
+    const isToday = selectedDashDate === new Date().toLocaleDateString("en-CA");
+    if (isToday) {
+      const interval = setInterval(fetchCompletedOrders, POLL_INTERVAL);
+      return () => clearInterval(interval);
+    }
+  }, [fetchCompletedOrders, selectedDashDate]);
 
   const fetchOrders = useCallback(async () => {
     const today = new Date();
@@ -559,7 +586,19 @@ export default function OrdersPage() {
             /* Dashboard view */
             <div className="flex-1 overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
-                <h1 className="text-lg font-extrabold">Today</h1>
+                <select
+                  value={selectedDashDate}
+                  onChange={(e) => setSelectedDashDate(e.target.value)}
+                  className="bg-transparent text-lg font-extrabold text-white border-none outline-none"
+                >
+                  {dashDates.map((d) => (
+                    <option key={d} value={d} className="bg-slate-800">
+                      {d === new Date().toLocaleDateString("en-CA")
+                        ? "Today"
+                        : new Date(d + "T00:00:00").toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric" })}
+                    </option>
+                  ))}
+                </select>
                 <button
                   onClick={() => setShowMenu(true)}
                   className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
@@ -598,20 +637,12 @@ export default function OrdersPage() {
                   </div>
                 </div>
 
-                {/* Full dashboard link */}
-                <a
-                  href="/dashboard"
-                  className="block text-center py-2 rounded-lg text-xs font-bold text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors"
-                >
-                  Full Dashboard (all dates)
-                </a>
-
                 {/* Completed orders — swipeable */}
                 <div className="text-xs font-bold text-slate-400 pt-1">
                   Orders ({completedOrders.length})
                 </div>
                 {completedOrders.length === 0 && (
-                  <div className="text-xs text-slate-600 text-center py-4">No completed orders today</div>
+                  <div className="text-xs text-slate-600 text-center py-4">No orders</div>
                 )}
                 <div className="space-y-1.5">
                   {completedOrders.map((order) => (
