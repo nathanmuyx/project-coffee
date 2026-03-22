@@ -1157,40 +1157,44 @@ function SwipeableOrderRow({
   onDelete: (id: string) => void;
   onMarkPaid?: (id: string) => void;
 }) {
-  const startXRef = useRef(0);
-  const offsetRef = useRef(0);
   const rowRef = useRef<HTMLDivElement>(null);
-  const [swiping, setSwiping] = useState(false);
+  const startX = useRef(0);
+  const currentX = useRef(0);
+  const swipingRef = useRef(false);
   const isCancelled = order.status === "cancelled";
+  const isUtang = !!onMarkPaid;
+  const threshold = isUtang ? 140 : 70;
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    startXRef.current = e.touches[0].clientX;
-    setSwiping(true);
+    startX.current = e.touches[0].clientX;
+    currentX.current = 0;
+    swipingRef.current = true;
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    const dx = Math.min(0, e.touches[0].clientX - startXRef.current); // left only
-    offsetRef.current = dx;
-    if (rowRef.current) {
-      rowRef.current.style.transform = `translateX(${dx}px)`;
-      rowRef.current.style.transition = "none";
-    }
+    if (!swipingRef.current || !rowRef.current) return;
+    const diff = e.touches[0].clientX - startX.current;
+    currentX.current = Math.min(0, diff);
+    rowRef.current.style.transform = `translateX(${currentX.current}px)`;
+    rowRef.current.style.transition = "none";
   };
 
   const handleTouchEnd = () => {
-    const dx = offsetRef.current;
+    if (!swipingRef.current || !rowRef.current) return;
+    swipingRef.current = false;
+    rowRef.current.style.transition = "transform 0.2s ease-out";
+    if (currentX.current < -threshold / 2) {
+      rowRef.current.style.transform = `translateX(-${threshold}px)`;
+    } else {
+      rowRef.current.style.transform = "translateX(0)";
+    }
+  };
+
+  const resetSwipe = () => {
     if (rowRef.current) {
       rowRef.current.style.transition = "transform 0.2s ease-out";
+      rowRef.current.style.transform = "translateX(0)";
     }
-
-    if (dx < -80) {
-      if (rowRef.current) rowRef.current.style.transform = "translateX(-100%)";
-      setTimeout(() => onDelete(order.id), 200);
-    } else {
-      if (rowRef.current) rowRef.current.style.transform = "translateX(0)";
-      setSwiping(false);
-    }
-    offsetRef.current = 0;
   };
 
   const time = new Date(order.created_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" });
@@ -1198,9 +1202,22 @@ function SwipeableOrderRow({
 
   return (
     <div className="relative overflow-hidden rounded-lg">
-      {/* Delete background — only visible during swipe */}
-      <div className={`absolute inset-0 bg-red-600 flex items-center justify-end pr-4 ${swiping ? "" : "hidden"}`}>
-        <span className="text-xs font-bold text-white">Delete</span>
+      {/* Action buttons revealed by swipe */}
+      <div className={`absolute inset-y-0 right-0 flex ${isUtang ? "w-[140px]" : "w-[70px]"}`}>
+        {isUtang && (
+          <button
+            onClick={() => { resetSwipe(); onMarkPaid!(order.id); }}
+            className="w-[70px] bg-emerald-500 text-white text-xs font-bold flex items-center justify-center"
+          >
+            Paid
+          </button>
+        )}
+        <button
+          onClick={() => { resetSwipe(); onDelete(order.id); }}
+          className="w-[70px] bg-red-500 text-white text-xs font-bold flex items-center justify-center"
+        >
+          Delete
+        </button>
       </div>
       {/* Foreground row */}
       <div
@@ -1208,7 +1225,7 @@ function SwipeableOrderRow({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="relative bg-slate-800 px-3 py-2"
+        className="relative bg-slate-800 px-3 py-2 z-10"
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1226,14 +1243,6 @@ function SwipeableOrderRow({
           <div className="flex items-center gap-2 shrink-0">
             {isCancelled && (
               <span className="text-[10px] font-bold text-red-400/60">Cancelled</span>
-            )}
-            {!isCancelled && onMarkPaid && (
-              <button
-                onClick={() => onMarkPaid(order.id)}
-                className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
-              >
-                Paid
-              </button>
             )}
             <span className={`text-sm font-bold ${isCancelled ? "text-slate-500" : "text-slate-200"}`}>{formatCurrency(order.total)}</span>
             <span className="text-[10px] text-slate-500">{time}</span>
