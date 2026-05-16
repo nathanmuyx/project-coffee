@@ -2,12 +2,46 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Order, MenuItem, Ingredient, MenuItemIngredient } from "@/lib/types";
+import { Order, MenuItem, Ingredient, MenuItemIngredient, Modifier } from "@/lib/types";
 import { formatCurrency, getShortName } from "@/lib/utils";
-import { sendShowGcash, sendHideGcash } from "@/lib/kiosk-channel";
+import { sendShowGcash, sendHideGcash, sendMenuRefresh } from "@/lib/kiosk-channel";
 import { deductStockForOrder } from "@/lib/stock";
 import CostsTab from "@/components/costs-tab";
+import { ImagePickerModal } from "@/components/image-picker-modal";
+import { ItemPickerModal } from "@/components/item-picker-modal";
+import { CashChangeModal } from "@/components/cash-change-modal";
+import { CashReceiptModal } from "@/components/cash-receipt-modal";
+import { buildDisplayMenu, DisplayDrink } from "@/lib/menu-config";
+
+interface CartLine {
+  key: string;
+  item: MenuItem;
+  qty: number;
+  modifiers: Modifier[];
+}
+
+const cartKey = (itemId: string, modifiers: Modifier[]) =>
+  `${itemId}|${[...modifiers].map((m) => m.name).sort().join(",")}`;
+
+const lineUnitPrice = (line: CartLine) =>
+  line.item.price + line.modifiers.reduce((s, m) => s + m.price_delta, 0);
 import { Snowflake, Fire } from "@phosphor-icons/react";
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const POLL_INTERVAL = 3000;
 const MAX_BLOCK = 20;
@@ -40,10 +74,32 @@ export default function OrdersPage() {
   const [gcashShowing, setGcashShowing] = useState(false);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
-  const [posCart, setPosCart] = useState<Map<string, { item: MenuItem; qty: number }>>(new Map());
+  const [posCart, setPosCart] = useState<Map<string, CartLine>>(new Map());
+  const [posView, setPosView] = useState<"combined" | "separate">("separate");
+  const [posPicker, setPosPicker] = useState<DisplayDrink | null>(null);
+  const [cashCalculatorOpen, setCashCalculatorOpen] = useState(false);
+  const [cashTendered, setCashTendered] = useState(0);
+  const [posCustomerName, setPosCustomerName] = useState("");
+
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("pos-view") : null;
+    if (saved === "combined" || saved === "separate") setPosView(saved);
+  }, []);
+
+  const togglePosView = () => {
+    const next = posView === "combined" ? "separate" : "combined";
+    setPosView(next);
+    if (typeof window !== "undefined") window.localStorage.setItem("pos-view", next);
+  };
+
+  const posDisplayMenu = useMemo(
+    () => buildDisplayMenu(menuItems.filter((m) => m.is_available)),
+    [menuItems]
+  );
   const [cashModalOrder, setCashModalOrder] = useState<Order | null>(null);
   const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
   const [showMenu, setShowMenu] = useState(false);
+  const [pushedAt, setPushedAt] = useState<number | null>(null);
   const [dashDates, setDashDates] = useState<string[]>([]);
   const [selectedDashDate, setSelectedDashDate] = useState<string>(() =>
     new Date().toLocaleDateString("en-CA")
@@ -241,34 +297,35 @@ export default function OrdersPage() {
   };
 
   // POS cart functions
-  const addToPosCart = (item: MenuItem) => {
+  const addToPosCart = (item: MenuItem, modifiers: Modifier[] = []) => {
+    const key = cartKey(item.id, modifiers);
     setPosCart((prev) => {
       const next = new Map(prev);
-      const existing = next.get(item.id);
+      const existing = next.get(key);
       if (existing) {
-        next.set(item.id, { ...existing, qty: existing.qty + 1 });
+        next.set(key, { ...existing, qty: existing.qty + 1 });
       } else {
-        next.set(item.id, { item, qty: 1 });
+        next.set(key, { key, item, qty: 1, modifiers });
       }
       return next;
     });
   };
 
-  const removePosItem = (itemId: string) => {
+  const decrementPosLine = (key: string) => {
     setPosCart((prev) => {
       const next = new Map(prev);
-      const existing = next.get(itemId);
+      const existing = next.get(key);
       if (existing && existing.qty > 1) {
-        next.set(itemId, { ...existing, qty: existing.qty - 1 });
+        next.set(key, { ...existing, qty: existing.qty - 1 });
       } else {
-        next.delete(itemId);
+        next.delete(key);
       }
       return next;
     });
   };
 
-  const posTotal = Array.from(posCart.values()).reduce((s, { item, qty }) => s + item.price * qty, 0);
-  const posTotalCost = Array.from(posCart.values()).reduce((s, { item, qty }) => s + item.cost * qty, 0);
+  const posTotal = Array.from(posCart.values()).reduce((s, line) => s + lineUnitPrice(line) * line.qty, 0);
+  const posTotalCost = Array.from(posCart.values()).reduce((s, line) => s + line.item.cost * line.qty, 0);
 
   const assignNextNumber = async (): Promise<number> => {
     const today = new Date();
@@ -284,8 +341,8 @@ export default function OrdersPage() {
     return (last % MAX_BLOCK) + 1;
   };
 
-  const submitPosOrder = async (method: "cash" | "gcash" | "utang") => {
-    if (posCart.size === 0) return;
+  const submitPosOrder = async (method: "cash" | "gcash" | "utang"): Promise<Order | null> => {
+    if (posCart.size === 0) return null;
     const chipNumber = await assignNextNumber();
     const { data: order, error: orderError } = await supabase
       .from("orders")
@@ -295,25 +352,28 @@ export default function OrdersPage() {
         status: "preparing",
         chip_number: chipNumber,
         payment_method: method,
+        customer_name: posCustomerName.trim() || null,
       })
-      .select("id")
+      .select("*")
       .single();
-    if (orderError || !order) return;
-    const items = Array.from(posCart.values()).map(({ item, qty }) => ({
+    if (orderError || !order) return null;
+    const items = Array.from(posCart.values()).map((line) => ({
       order_id: order.id,
-      menu_item_id: item.id,
-      item_name: item.name,
-      item_price: item.price,
-      item_cost: item.cost,
-      quantity: qty,
+      menu_item_id: line.item.id,
+      item_name: line.item.name,
+      item_price: lineUnitPrice(line),
+      item_cost: line.item.cost,
+      quantity: line.qty,
+      modifiers: line.modifiers,
     }));
     const { data: insertedItems } = await supabase.from("order_items").insert(items).select();
     setPosCart(new Map());
+    setPosCustomerName("");
     fetchOrders();
-    // Fire-and-forget stock deduction
     if (insertedItems) {
       deductStockForOrder(order.id, insertedItems);
     }
+    return order as Order;
   };
 
   const confirmOrders = orders.filter((o) => o.status === "pending");
@@ -341,8 +401,118 @@ export default function OrdersPage() {
   }, [completedOrders]);
 
   const updateMenuItem = async (id: string, updates: Partial<MenuItem>) => {
-    await supabase.from("menu_items").update(updates).eq("id", id);
+    const { error } = await supabase.from("menu_items").update(updates).eq("id", id);
+    if (error) {
+      console.error("updateMenuItem", error);
+      window.alert(`Update failed: ${error.message}`);
+      return;
+    }
     setMenuItems((prev) => prev.map((m) => m.id === id ? { ...m, ...updates } : m));
+  };
+
+  const addMenuItem = async () => {
+    const nextSort = menuItems.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
+    const { data, error } = await supabase
+      .from("menu_items")
+      .insert({
+        name: "New item",
+        category: "drink",
+        price: 0,
+        cost: 0,
+        is_available: true,
+        sort_order: nextSort,
+      })
+      .select("*")
+      .single();
+    if (error || !data) {
+      console.error("addMenuItem", error);
+      window.alert(`Add failed: ${error?.message ?? "no data returned"}`);
+      return;
+    }
+    setMenuItems((prev) => [...prev, data]);
+  };
+
+  const renameMenuGroup = async (oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    const { error } = await supabase
+      .from("menu_items")
+      .update({ display_group: trimmed })
+      .eq("display_group", oldName);
+    if (error) {
+      window.alert(`Rename failed: ${error.message}`);
+      return;
+    }
+    setMenuItems((prev) =>
+      prev.map((m) => (m.display_group === oldName ? { ...m, display_group: trimmed } : m))
+    );
+  };
+
+  const setGroupAvailability = async (name: string, isAvailable: boolean) => {
+    const { error } = await supabase
+      .from("menu_items")
+      .update({ is_available: isAvailable })
+      .eq("display_group", name);
+    if (error) {
+      window.alert(`Toggle failed: ${error.message}`);
+      return;
+    }
+    setMenuItems((prev) =>
+      prev.map((m) => (m.display_group === name ? { ...m, is_available: isAvailable } : m))
+    );
+  };
+
+  const deleteMenuGroup = async (name: string) => {
+    const count = menuItems.filter((m) => m.display_group === name).length;
+    if (!window.confirm(`Remove group "${name}"? ${count} item${count === 1 ? "" : "s"} will become ungrouped (items are NOT deleted).`)) return;
+    const { error } = await supabase
+      .from("menu_items")
+      .update({ display_group: null })
+      .eq("display_group", name);
+    if (error) {
+      window.alert(`Delete group failed: ${error.message}`);
+      return;
+    }
+    setMenuItems((prev) =>
+      prev.map((m) => (m.display_group === name ? { ...m, display_group: null } : m))
+    );
+  };
+
+  const deleteMenuItem = async (id: string) => {
+    const item = menuItems.find((m) => m.id === id);
+    if (!item) return;
+    if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    const { error } = await supabase.from("menu_items").delete().eq("id", id);
+    if (error) {
+      console.error("deleteMenuItem", error);
+      window.alert(
+        `Cannot delete "${item.name}": ${error.message}\n\nIf this is a foreign-key error, the item has order history. Toggle availability off to hide it instead.`
+      );
+      return;
+    }
+    setMenuItems((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const reorderMenuItems = async (activeId: string, overId: string) => {
+    setMenuItems((prev) => {
+      const oldIndex = prev.findIndex((m) => m.id === activeId);
+      const newIndex = prev.findIndex((m) => m.id === overId);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      const next = arrayMove(prev, oldIndex, newIndex);
+      const changed: { id: string; sort_order: number }[] = [];
+      for (let i = 0; i < next.length; i++) {
+        if (next[i].sort_order !== i) {
+          next[i] = { ...next[i], sort_order: i };
+          changed.push({ id: next[i].id, sort_order: i });
+        }
+      }
+      Promise.all(
+        changed.map((c) =>
+          supabase.from("menu_items").update({ sort_order: c.sort_order }).eq("id", c.id)
+        )
+      );
+      return next;
+    });
   };
 
   const pendingCount = confirmOrders.length;
@@ -466,76 +636,151 @@ export default function OrdersPage() {
             {/* POS Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
               <h1 className="text-lg font-extrabold">POS</h1>
-              <button
-                onClick={toggleGcash}
-                className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
-                  gcashShowing
-                    ? "bg-blue-500 text-white"
-                    : "bg-blue-500/15 text-blue-400"
-                }`}
-              >
-                {gcashShowing ? "Hide QR" : "Show QR"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={togglePosView}
+                  className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
+                    posView === "combined"
+                      ? "bg-purple-500/20 text-purple-300"
+                      : "bg-slate-700 text-slate-300"
+                  }`}
+                >
+                  {posView === "combined" ? "Combined" : "Separate"}
+                </button>
+                <button
+                  onClick={toggleGcash}
+                  className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
+                    gcashShowing
+                      ? "bg-blue-500 text-white"
+                      : "bg-blue-500/15 text-blue-400"
+                  }`}
+                >
+                  {gcashShowing ? "Hide QR" : "Show QR"}
+                </button>
+              </div>
             </div>
 
             {/* Menu grid */}
             <div className="flex-1 overflow-y-auto p-3">
-              <div className="grid grid-cols-3 gap-2">
-                {menuItems.filter((m) => m.is_available).map((item) => {
-                  const inCart = posCart.get(item.id);
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => addToPosCart(item)}
-                      className="relative flex flex-col items-center gap-1 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 transition-colors active:scale-95"
-                    >
-                      {inCart && (
-                        <span className="absolute top-1.5 right-1.5 min-w-6 h-6 flex items-center justify-center rounded-full bg-blue-500 text-white text-xs font-bold px-1">
-                          {inCart.qty}
+              {posView === "separate" ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {menuItems.filter((m) => m.is_available).map((item) => {
+                    const totalQty = Array.from(posCart.values())
+                      .filter((l) => l.item.id === item.id)
+                      .reduce((s, l) => s + l.qty, 0);
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setPosPicker({
+                          name: item.name,
+                          image: item.image_url ?? "",
+                          color: "",
+                          price: item.price,
+                          variants: [{ label: "", menuItem: item }],
+                        })}
+                        className="relative flex flex-col items-center gap-1 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 transition-colors active:scale-95"
+                      >
+                        {totalQty > 0 && (
+                          <span className="absolute top-1.5 right-1.5 min-w-6 h-6 flex items-center justify-center rounded-full bg-blue-500 text-white text-xs font-bold px-1">
+                            {totalQty}
+                          </span>
+                        )}
+                        <span className="text-sm font-semibold text-slate-200 text-center leading-tight">
+                          {item.name}
                         </span>
-                      )}
-                      <span className="text-sm font-semibold text-slate-200 text-center leading-tight">
-                        {item.name}
-                      </span>
-                      <span className="text-xs text-slate-400">{formatCurrency(item.price)}</span>
-                    </button>
-                  );
-                })}
-              </div>
+                        <span className="text-xs text-slate-400">{formatCurrency(item.price)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {posDisplayMenu.map((drink) => {
+                    const variantIds = new Set(drink.variants.map((v) => v.menuItem.id));
+                    const totalQty = Array.from(posCart.values())
+                      .filter((l) => variantIds.has(l.item.id))
+                      .reduce((s, l) => s + l.qty, 0);
+                    return (
+                      <button
+                        key={drink.name + drink.variants[0].menuItem.id}
+                        onClick={() => setPosPicker(drink)}
+                        className="relative flex flex-col items-center gap-1 p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 transition-colors active:scale-95"
+                      >
+                        {totalQty > 0 && (
+                          <span className="absolute top-1.5 right-1.5 min-w-6 h-6 flex items-center justify-center rounded-full bg-blue-500 text-white text-xs font-bold px-1">
+                            {totalQty}
+                          </span>
+                        )}
+                        <span className="text-sm font-semibold text-slate-200 text-center leading-tight">
+                          {drink.name}
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          {formatCurrency(drink.price)}
+                          {drink.variants.length > 1 && (
+                            <span className="ml-1 text-slate-500">· {drink.variants.length}</span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+
+            {posPicker && (
+              <ItemPickerModal
+                drink={posPicker}
+                onAdd={(menuItem, modifiers) => addToPosCart(menuItem, modifiers)}
+                onClose={() => setPosPicker(null)}
+              />
+            )}
 
             {/* POS Cart */}
             {posCart.size > 0 && (
               <div className="shrink-0 border-t border-slate-700 bg-slate-800 px-4 py-3">
-                <div className="space-y-1 mb-3 max-h-32 overflow-y-auto">
-                  {Array.from(posCart.values()).map(({ item, qty }) => (
-                    <div key={item.id} className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
+                <div className="space-y-1.5 mb-3 max-h-40 overflow-y-auto">
+                  {Array.from(posCart.values()).map((line) => (
+                    <div key={line.key} className="flex items-start justify-between text-sm gap-2">
+                      <div className="flex items-start gap-2 flex-1 min-w-0">
                         <button
-                          onClick={() => removePosItem(item.id)}
-                          className="w-6 h-6 rounded bg-slate-700 hover:bg-red-500/20 text-slate-400 hover:text-red-400 flex items-center justify-center text-xs font-bold transition-colors"
+                          onClick={() => decrementPosLine(line.key)}
+                          className="w-6 h-6 mt-0.5 shrink-0 rounded bg-slate-700 hover:bg-red-500/20 text-slate-400 hover:text-red-400 flex items-center justify-center text-xs font-bold transition-colors"
                         >
                           -
                         </button>
-                        <span className="text-slate-300">
-                          <span className="text-slate-500 mr-1">{qty}x</span>
-                          {item.name}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-slate-300">
+                            <span className="text-slate-500 mr-1">{line.qty}x</span>
+                            {line.item.name}
+                          </div>
+                          {line.modifiers.length > 0 && (
+                            <div className="text-[10px] text-emerald-400 mt-0.5 leading-tight">
+                              {line.modifiers.map((m) => `+ ${m.name}`).join(" · ")}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <span className="text-slate-400">{formatCurrency(item.price * qty)}</span>
+                      <span className="text-slate-400 shrink-0">{formatCurrency(lineUnitPrice(line) * line.qty)}</span>
                     </div>
                   ))}
                 </div>
+                <input
+                  type="text"
+                  value={posCustomerName}
+                  onChange={(e) => setPosCustomerName(e.target.value)}
+                  placeholder="Name (optional)"
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white mb-2 placeholder:text-slate-500"
+                />
                 <div className="flex items-center gap-3">
                   <span className="text-xl font-bold text-white mr-auto">{formatCurrency(posTotal)}</span>
                   <button
-                    onClick={() => setPosCart(new Map())}
+                    onClick={() => { setPosCart(new Map()); setPosCustomerName(""); }}
                     className="px-4 py-2 rounded-lg text-sm font-bold text-red-400 border border-red-400/30 hover:bg-red-500/15 transition-colors"
                   >
                     Clear
                   </button>
                   <button
-                    onClick={() => submitPosOrder("cash")}
+                    onClick={() => setCashCalculatorOpen(true)}
                     className="px-4 py-2 rounded-lg bg-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/30 transition-colors"
                   >
                     Cash
@@ -555,6 +800,21 @@ export default function OrdersPage() {
                 </div>
               </div>
             )}
+
+            {cashCalculatorOpen && (
+              <CashChangeModal
+                total={posTotal}
+                onConfirm={async (tendered) => {
+                  const saved = await submitPosOrder("cash");
+                  setCashCalculatorOpen(false);
+                  if (saved) {
+                    setCashTendered(tendered);
+                    setCashModalOrder(saved);
+                  }
+                }}
+                onClose={() => setCashCalculatorOpen(false)}
+              />
+            )}
           </div>
         ) : tab === "dashboard" ? (
           showMenu ? (
@@ -562,19 +822,42 @@ export default function OrdersPage() {
             <div className="flex-1 overflow-hidden flex flex-col">
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
                 <h1 className="text-lg font-extrabold">Menu</h1>
-                <button
-                  onClick={() => setShowMenu(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
-                >
-                  Back
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      sendMenuRefresh();
+                      setPushedAt(Date.now());
+                      setTimeout(() => setPushedAt(null), 1500);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-blue-300 bg-blue-500/15 hover:bg-blue-500/25 transition-colors"
+                  >
+                    {pushedAt ? "Pushed ✓" : "Push to Kiosk"}
+                  </button>
+                  <button
+                    onClick={addMenuItem}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25 transition-colors"
+                  >
+                    + New
+                  </button>
+                  <button
+                    onClick={() => setShowMenu(false)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 border border-slate-600 hover:bg-slate-700 transition-colors"
+                  >
+                    Back
+                  </button>
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto">
-                <div className="divide-y divide-slate-700/50">
-                  {menuItems.map((item) => (
-                    <MenuItemRow key={item.id} item={item} ingredients={ingredients} onUpdate={updateMenuItem} />
-                  ))}
-                </div>
+                <SortableMenuList
+                  menuItems={menuItems}
+                  ingredients={ingredients}
+                  onUpdate={updateMenuItem}
+                  onReorder={reorderMenuItems}
+                  onDelete={deleteMenuItem}
+                  onRenameGroup={renameMenuGroup}
+                  onDeleteGroup={deleteMenuGroup}
+                  onSetGroupAvailability={setGroupAvailability}
+                />
                 {menuItems.length === 0 && (
                   <div className="flex items-center justify-center h-32 text-slate-600 text-sm">
                     No menu items
@@ -716,134 +999,16 @@ export default function OrdersPage() {
         </button>
       </div>
 
-      {/* Cash payment modal */}
       {cashModalOrder && (
-        <CashPaymentModal
+        <CashReceiptModal
           order={cashModalOrder}
-          onConfirm={() => {
-            handleAcceptPayment(cashModalOrder.id);
+          cashTendered={cashTendered}
+          onClose={() => {
             setCashModalOrder(null);
+            setCashTendered(0);
           }}
-          onClose={() => setCashModalOrder(null)}
         />
       )}
-    </div>
-  );
-}
-
-function CashPaymentModal({ order, onConfirm, onClose }: { order: Order; onConfirm: () => void; onClose: () => void }) {
-  const [inputStr, setInputStr] = useState("");
-  const cashGiven = parseInt(inputStr, 10) || 0;
-  const change = cashGiven - order.total;
-  const hasEnough = cashGiven >= order.total;
-
-  const tapDigit = (d: string) => setInputStr((v) => (v + d).slice(0, 6));
-  const tapBackspace = () => setInputStr((v) => v.slice(0, -1));
-  const tapPreset = (amt: number) => setInputStr(String(amt));
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5 mx-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-        {/* Block number */}
-        <div className="flex flex-col items-center mb-4">
-          <div className="w-16 h-16 rounded-xl bg-white flex items-center justify-center mb-2">
-            <span className="text-3xl font-extrabold text-black">{order.chip_number ?? "?"}</span>
-          </div>
-          <span className="text-sm text-slate-300">Prepare block <span className="font-bold text-white">{order.chip_number}</span> for customer</span>
-        </div>
-
-        {/* Total */}
-        <div className="text-center mb-4">
-          <span className="text-sm text-slate-400">Total</span>
-          <div className="text-3xl font-extrabold text-white">{formatCurrency(order.total)}</div>
-        </div>
-
-        {/* Presets */}
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {[200, 500, 1000].map((amt) => (
-            <button
-              key={amt}
-              onClick={() => tapPreset(amt)}
-              className={`py-2.5 rounded-xl text-sm font-bold transition-colors ${
-                cashGiven === amt
-                  ? "bg-blue-500 text-white"
-                  : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-              }`}
-            >
-              {formatCurrency(amt)}
-            </button>
-          ))}
-        </div>
-
-        {/* Calculator display */}
-        <div className="bg-slate-900 rounded-xl px-4 py-2.5 mb-3 text-right">
-          <span className="text-2xl font-extrabold text-white">
-            {inputStr ? formatCurrency(cashGiven) : <span className="text-slate-600">₱0</span>}
-          </span>
-        </div>
-
-        {/* Calculator keypad */}
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          {["1","2","3","4","5","6","7","8","9"].map((d) => (
-            <button
-              key={d}
-              onClick={() => tapDigit(d)}
-              className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-lg font-bold text-white transition-colors active:scale-95"
-            >
-              {d}
-            </button>
-          ))}
-          <button
-            onClick={() => setInputStr("")}
-            className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-sm font-bold text-slate-400 transition-colors active:scale-95"
-          >
-            C
-          </button>
-          <button
-            onClick={() => tapDigit("0")}
-            className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-lg font-bold text-white transition-colors active:scale-95"
-          >
-            0
-          </button>
-          <button
-            onClick={tapBackspace}
-            className="py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white transition-colors active:scale-95 flex items-center justify-center"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414-6.414a2 2 0 011.414-.586H19a2 2 0 012 2v10a2 2 0 01-2 2h-8.172a2 2 0 01-1.414-.586L3 12z" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Cash given & change */}
-        {cashGiven > 0 && (
-          <div className="bg-slate-900 rounded-xl p-4 mb-4">
-            <div className="flex justify-between items-center">
-              <span className={`text-3xl font-extrabold ${hasEnough ? "text-emerald-400" : "text-red-400"}`}>
-                {hasEnough ? formatCurrency(change) : `-${formatCurrency(Math.abs(change))}`}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex gap-3">
-          <button
-            onClick={onConfirm}
-            className="flex-1 py-3 rounded-xl text-sm font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-colors"
-          >
-            Exact {formatCurrency(order.total)}
-          </button>
-          {cashGiven > 0 && hasEnough && (
-            <button
-              onClick={onConfirm}
-              className="flex-1 py-3 rounded-xl text-sm font-bold bg-blue-500 hover:bg-blue-600 text-white transition-colors"
-            >
-              Confirm ({formatCurrency(change)} change)
-            </button>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -891,6 +1056,11 @@ function QueueCard({
           position === 0 ? "text-indigo-300" : "text-indigo-400/50"
         }`}>
           {position === 0 ? "Now" : "Next"}
+        </div>
+      )}
+      {order.customer_name && (
+        <div className="text-base font-extrabold text-white truncate mb-1.5">
+          {order.customer_name}
         </div>
       )}
       <div className="flex items-center gap-3">
@@ -979,14 +1149,120 @@ function QueueCard({
   );
 }
 
-function MenuItemRow({ item, ingredients, onUpdate }: { item: MenuItem; ingredients: Ingredient[]; onUpdate: (id: string, updates: Partial<MenuItem>) => void }) {
+type GroupStatus = "all" | "none" | "mixed";
+
+function SortableMenuList({
+  menuItems,
+  ingredients,
+  onUpdate,
+  onReorder,
+  onDelete,
+  onRenameGroup,
+  onDeleteGroup,
+  onSetGroupAvailability,
+}: {
+  menuItems: MenuItem[];
+  ingredients: Ingredient[];
+  onUpdate: (id: string, updates: Partial<MenuItem>) => void;
+  onReorder: (activeId: string, overId: string) => void;
+  onDelete: (id: string) => void;
+  onRenameGroup: (oldName: string, newName: string) => void;
+  onDeleteGroup: (name: string) => void;
+  onSetGroupAvailability: (name: string, isAvailable: boolean) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    onReorder(String(active.id), String(over.id));
+  };
+
+  const allGroups = Array.from(
+    new Set(menuItems.map((m) => m.display_group).filter((g): g is string => !!g))
+  ).sort();
+
+  const groupStatus = new Map<string, GroupStatus>();
+  const groupCoverItemId = new Map<string, string>();
+  for (const g of allGroups) {
+    const members = menuItems.filter((m) => m.display_group === g);
+    const available = members.filter((m) => m.is_available).length;
+    groupStatus.set(g, available === 0 ? "none" : available === members.length ? "all" : "mixed");
+    const cover = [...members]
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .find((m) => m.image_url);
+    if (cover) groupCoverItemId.set(g, cover.id);
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={menuItems.map((m) => m.id)} strategy={verticalListSortingStrategy}>
+        <div className="divide-y divide-slate-700/50">
+          {menuItems.map((item) => (
+            <MenuItemRow
+              key={item.id}
+              item={item}
+              ingredients={ingredients}
+              allGroups={allGroups}
+              groupStatus={item.display_group ? groupStatus.get(item.display_group) ?? null : null}
+              isGroupCover={item.display_group ? groupCoverItemId.get(item.display_group) === item.id : false}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onRenameGroup={onRenameGroup}
+              onDeleteGroup={onDeleteGroup}
+              onSetGroupAvailability={onSetGroupAvailability}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function MenuItemRow({ item, ingredients, allGroups, groupStatus, isGroupCover, onUpdate, onDelete, onRenameGroup, onDeleteGroup, onSetGroupAvailability }: { item: MenuItem; ingredients: Ingredient[]; allGroups: string[]; groupStatus: GroupStatus | null; isGroupCover: boolean; onUpdate: (id: string, updates: Partial<MenuItem>) => void; onDelete: (id: string) => void; onRenameGroup: (oldName: string, newName: string) => void; onDeleteGroup: (name: string) => void; onSetGroupAvailability: (name: string, isAvailable: boolean) => void }) {
+  const [name, setName] = useState(item.name);
   const [price, setPrice] = useState(String(item.price));
   const [cost, setCost] = useState(String(item.cost));
+  const [label, setLabel] = useState(item.display_label ?? "");
   const [expanded, setExpanded] = useState(false);
   const [recipe, setRecipe] = useState<MenuItemIngredient[]>([]);
   const [loadedRecipe, setLoadedRecipe] = useState(false);
   const [addingId, setAddingId] = useState("");
   const [addingQty, setAddingQty] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  const saveName = () => {
+    const trimmed = name.trim();
+    if (trimmed && trimmed !== item.name) onUpdate(item.id, { name: trimmed });
+    else setName(item.name);
+  };
+
+  const saveLabel = () => {
+    const trimmed = label.trim();
+    const next = trimmed || null;
+    if (next !== item.display_label) onUpdate(item.id, { display_label: next });
+  };
+
+  const changeGroup = (value: string) => {
+    if (value === "__new__") {
+      const entered = window.prompt("New group name?", "")?.trim();
+      if (!entered) return;
+      onUpdate(item.id, { display_group: entered });
+    } else if (value === "__none__") {
+      onUpdate(item.id, { display_group: null });
+    } else {
+      onUpdate(item.id, { display_group: value });
+    }
+  };
 
   const savePrice = () => {
     const val = parseFloat(price);
@@ -1051,45 +1327,196 @@ function MenuItemRow({ item, ingredients, onUpdate }: { item: MenuItem; ingredie
   };
 
   return (
-    <div className={`${!item.is_available ? "opacity-40" : ""}`}>
-      <div className="px-4 py-3 flex items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <button onClick={toggleExpand} className="text-sm font-bold text-slate-200 truncate text-left block">
-            {item.name}
-          </button>
-          <div className="flex items-center gap-3 mt-1.5">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`${!item.is_available ? "opacity-40" : ""} ${isDragging ? "opacity-50 bg-slate-800 relative z-10" : ""}`}
+    >
+      <div className="px-3 py-3 flex items-start gap-2">
+        <button
+          onClick={() => setShowPicker(true)}
+          title={isGroupCover ? "This image represents the group" : undefined}
+          className={`relative w-12 h-12 rounded-lg overflow-hidden bg-slate-700 border shrink-0 flex items-center justify-center ${
+            isGroupCover ? "border-emerald-400 ring-1 ring-emerald-400/40" : "border-slate-600"
+          }`}
+        >
+          {item.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={item.image_url}
+              alt=""
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            <span className="text-xl text-slate-500">+</span>
+          )}
+          {isGroupCover && (
+            <span className="absolute bottom-0 inset-x-0 bg-emerald-500/90 text-[8px] font-bold text-white text-center leading-none py-0.5">
+              COVER
+            </span>
+          )}
+        </button>
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={saveName}
+            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm font-bold text-white"
+          />
+          <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-500">Price</span>
+              <span className="text-[10px] text-slate-500">₱</span>
               <input
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 onBlur={savePrice}
-                className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white font-semibold text-right"
+                className="w-16 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-white font-semibold text-right"
               />
             </div>
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-500">Cost</span>
+              <span className="text-[10px] text-slate-500">cost</span>
               <input
                 type="number"
                 value={cost}
                 onChange={(e) => setCost(e.target.value)}
                 onBlur={saveCost}
-                className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-slate-400 font-semibold text-right"
+                className="w-16 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-400 font-semibold text-right"
               />
             </div>
+            <button
+              onClick={() => onDelete(item.id)}
+              aria-label="Delete"
+              className="ml-auto w-7 h-7 flex items-center justify-center rounded-md text-red-400 hover:bg-red-500/15 transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2.5 4h11" />
+                <path d="M6 4V2.5h4V4" />
+                <path d="M3.5 4l.7 9.2a1.3 1.3 0 0 0 1.3 1.3h5a1.3 1.3 0 0 0 1.3-1.3L12.5 4" />
+              </svg>
+            </button>
+            <button
+              onClick={toggleExpand}
+              className="text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              Recipe {expanded ? "▲" : "▼"}
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 shrink-0">Group</span>
+            <select
+              value={item.display_group ?? "__none__"}
+              onChange={(e) => changeGroup(e.target.value)}
+              className="flex-1 min-w-0 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-white"
+            >
+              <option value="__none__">(none)</option>
+              {allGroups.map((g) => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+              {item.display_group && !allGroups.includes(item.display_group) && (
+                <option value={item.display_group}>{item.display_group}</option>
+              )}
+              <option value="__new__">+ New group…</option>
+            </select>
+            {item.display_group && (
+              <>
+                <button
+                  onClick={() => onSetGroupAvailability(item.display_group!, groupStatus !== "all")}
+                  aria-label={groupStatus === "all" ? "Hide group" : "Show group"}
+                  title={
+                    groupStatus === "all"
+                      ? "Visible — tap to hide"
+                      : groupStatus === "none"
+                      ? "Hidden — tap to show"
+                      : "Mixed — tap to show all"
+                  }
+                  className={`w-6 h-6 flex items-center justify-center rounded-md hover:bg-slate-700 transition-colors shrink-0 ${
+                    groupStatus === "all"
+                      ? "text-emerald-400"
+                      : groupStatus === "none"
+                      ? "text-slate-600"
+                      : "text-amber-400"
+                  }`}
+                >
+                  {groupStatus === "none" ? (
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
+                      <circle cx="8" cy="8" r="1.5" />
+                      <line x1="2" y1="14" x2="14" y2="2" />
+                    </svg>
+                  ) : (
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M2 8s2.5-4.5 6-4.5 6 4.5 6 4.5-2.5 4.5-6 4.5S2 8 2 8z" />
+                      <circle cx="8" cy="8" r="2" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    const entered = window.prompt(`Rename group "${item.display_group}" to:`, item.display_group ?? "")?.trim();
+                    if (entered && entered !== item.display_group) onRenameGroup(item.display_group!, entered);
+                  }}
+                  aria-label="Rename group"
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors shrink-0"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M11 2l3 3-8.5 8.5L2 14l.5-3.5L11 2z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => onDeleteGroup(item.display_group!)}
+                  aria-label="Delete group"
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-red-400 hover:bg-red-500/15 transition-colors shrink-0"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M2.5 4h11" />
+                    <path d="M6 4V2.5h4V4" />
+                    <path d="M3.5 4l.7 9.2a1.3 1.3 0 0 0 1.3 1.3h5a1.3 1.3 0 0 0 1.3-1.3L12.5 4" />
+                  </svg>
+                </button>
+              </>
+            )}
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              onBlur={saveLabel}
+              placeholder="Hot / Iced"
+              className="w-20 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-white"
+            />
           </div>
         </div>
-        <button
-          onClick={() => onUpdate(item.id, { is_available: !item.is_available })}
-          className={`w-14 h-8 rounded-full relative transition-colors ${
-            item.is_available ? "bg-emerald-500" : "bg-slate-600"
-          }`}
-        >
-          <span className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
-            item.is_available ? "right-1" : "left-1"
-          }`} />
-        </button>
+        <div className="flex flex-col items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => onUpdate(item.id, { is_available: !item.is_available })}
+            className={`w-12 h-7 rounded-full relative transition-colors ${
+              item.is_available ? "bg-emerald-500" : "bg-slate-600"
+            }`}
+          >
+            <span className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all ${
+              item.is_available ? "right-1" : "left-1"
+            }`} />
+          </button>
+          <button
+            {...attributes}
+            {...listeners}
+            aria-label="Reorder"
+            className="w-12 h-7 flex items-center justify-center text-slate-500 hover:text-slate-300 cursor-grab active:cursor-grabbing touch-none"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="4" r="1.4" />
+              <circle cx="5" cy="8" r="1.4" />
+              <circle cx="5" cy="12" r="1.4" />
+              <circle cx="11" cy="4" r="1.4" />
+              <circle cx="11" cy="8" r="1.4" />
+              <circle cx="11" cy="12" r="1.4" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {expanded && (
@@ -1174,6 +1601,14 @@ function MenuItemRow({ item, ingredients, onUpdate }: { item: MenuItem; ingredie
             </div>
           </div>
         </div>
+      )}
+
+      {showPicker && (
+        <ImagePickerModal
+          currentUrl={item.image_url}
+          onPick={(url) => onUpdate(item.id, { image_url: url })}
+          onClose={() => setShowPicker(false)}
+        />
       )}
     </div>
   );

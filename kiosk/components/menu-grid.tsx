@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { MenuItem, CartItem } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import { DisplayDrink } from "@/lib/menu-config";
-import { Snowflake, Fire } from "@phosphor-icons/react";
+import { VariantPickerModal } from "./variant-picker-modal";
 
 interface MenuGridProps {
   drinks: DisplayDrink[];
@@ -33,9 +33,9 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
     }
   };
 
-  const handleVariantPick = (variant: { label: string; menuItem: MenuItem }) => {
-    const inCart = cartQtyMap.get(variant.menuItem.id) ?? 0;
-    onAddItem(variant.menuItem, inCart > 0 ? -inCart : 1);
+  const handleVariantPick = (menuItem: MenuItem) => {
+    const inCart = cartQtyMap.get(menuItem.id) ?? 0;
+    onAddItem(menuItem, inCart > 0 ? -inCart : 1);
     setVariantPicker(null);
   };
 
@@ -96,45 +96,13 @@ export function MenuGrid({ drinks, cart, onAddItem }: MenuGridProps) {
         )}
       </div>
 
-      {/* Hot / Iced variant picker */}
       {variantPicker && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
-          onClick={() => setVariantPicker(null)}
-        >
-          <div
-            className="bg-white w-full max-w-md rounded-3xl p-8"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-3xl font-bold text-black text-center mb-6">
-              {variantPicker.name}
-            </h3>
-            <div className="flex gap-4">
-              {variantPicker.variants.map((v) => {
-                const isHot = /hot/i.test(v.label);
-                const isInCart = (cartQtyMap.get(v.menuItem.id) ?? 0) > 0;
-                return (
-                  <button
-                    key={v.label}
-                    onClick={() => handleVariantPick(v)}
-                    className={`flex-1 flex flex-col items-center gap-3 py-10 rounded-2xl text-center transition-colors active:scale-95 ${
-                      isInCart ? "bg-black text-white border-2 border-black" : "bg-gray-100 hover:bg-gray-200 border-2 border-gray-200"
-                    }`}
-                  >
-                    {isHot
-                      ? <Fire size={52} weight="fill" className="text-red-500" />
-                      : <Snowflake size={52} weight="fill" className="text-blue-500" />
-                    }
-                    <span className={`text-4xl font-extrabold ${isInCart ? "text-white" : "text-black"}`}>{v.label}</span>
-                    <span className={`text-2xl font-semibold ${isInCart ? "text-gray-300" : "text-gray-500"}`}>
-                      {formatCurrency(v.menuItem.price)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <VariantPickerModal
+          drink={variantPicker}
+          cartQtyMap={cartQtyMap}
+          onPick={handleVariantPick}
+          onClose={() => setVariantPicker(null)}
+        />
       )}
     </>
   );

@@ -21,3 +21,11 @@ export function sendHideGcash() {
     payload: { mode: "normal" },
   });
 }
+
+export function sendMenuRefresh() {
+  supabase.channel(CHANNEL_NAME).send({
+    type: "broadcast",
+    event: "display",
+    payload: { mode: "refresh_menu" },
+  });
+}

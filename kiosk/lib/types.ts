@@ -6,6 +6,9 @@ export interface MenuItem {
   cost: number;
   is_available: boolean;
   sort_order: number;
+  image_url: string | null;
+  display_group: string | null;
+  display_label: string | null;
 }
 
 export interface CartItem {
@@ -23,8 +26,14 @@ export interface Order {
   payment_method: "cash" | "gcash" | "utang";
   receipt_url: string | null;
   notes: string | null;
+  customer_name: string | null;
   created_at: string;
   order_items?: OrderItem[];
+}
+
+export interface Modifier {
+  name: string;
+  price_delta: number;
 }
 
 export interface OrderItem {
@@ -35,6 +44,7 @@ export interface OrderItem {
   item_price: number;
   item_cost: number;
   quantity: number;
+  modifiers: Modifier[];
 }
 
 export interface Ingredient {

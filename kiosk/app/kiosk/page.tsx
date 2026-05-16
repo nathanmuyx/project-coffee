@@ -32,7 +32,7 @@ export default function KioskPage() {
   const [qrLoaded, setQrLoaded] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
+  const fetchMenuItems = useCallback(() => {
     supabase
       .from("menu_items")
       .select("*")
@@ -42,6 +42,10 @@ export default function KioskPage() {
         if (data) setMenuItems(data);
       });
   }, []);
+
+  useEffect(() => {
+    fetchMenuItems();
+  }, [fetchMenuItems]);
 
   // Fetch next block number (last used today % 20 + 1)
   const assignNextNumber = useCallback(async () => {
@@ -74,10 +78,11 @@ export default function KioskPage() {
       .on("broadcast", { event: "display" }, ({ payload }) => {
         if (payload.mode === "gcash_qr") setGcashOverride(true);
         if (payload.mode === "normal") setGcashOverride(false);
+        if (payload.mode === "refresh_menu") fetchMenuItems();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [fetchMenuItems]);
 
   // Auto-reset from success after 3s
   useEffect(() => {
